@@ -1,9 +1,9 @@
-# main.py
-import yaml
+#!/usr/bin/env python3
+from cli.menu import Menu
 
 def main():
-    data = {'hello': 'world'}
-    print(yaml.dump(data))
+    menu = Menu()
+    menu.run()
 
 if __name__ == "__main__":
     main()

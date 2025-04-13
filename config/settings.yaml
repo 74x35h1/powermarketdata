@@ -1,0 +1,32 @@
+database:
+  path: "data/market_data.db"
+  type: "duckdb"
+
+data_sources:
+  jepx:
+    base_url: "https://www.jepx.jp/js/csv_read.php"
+    headers:
+      Accept: "*/*"
+      User-Agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+  
+  jma:
+    base_url: "https://www.jma.go.jp/bosai/forecast/data/"
+  
+  occto:
+    base_url: "https://www.occto.or.jp/"
+  
+  tso:
+    base_url: "https://www.energia.co.jp/"
+
+futures:
+  eex:
+    base_url: "https://www.eex.com/"
+  tocom:
+    base_url: "https://www.tocom.or.jp/"
+  ice:
+    base_url: "https://www.theice.com/"
+
+paths:
+  data_dir: "data"
+  export_dir: "exports"
+  logs_dir: "logs" 

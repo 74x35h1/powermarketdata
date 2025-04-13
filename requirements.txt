@@ -1,1 +1,17 @@
-PyYAML==6.0.2
+# Core Dependencies
+duckdb==1.2.2
+requests==2.32.3
+pandas==2.2.3
+numpy==2.2.4
+pyarrow==19.0.1
+
+# Configuration
+python-dotenv==1.1.0
+pyyaml==6.0.2
+
+# Development Tools
+pytest==8.3.5
+black==25.1.0
+flake8==7.2.0
+mypy==1.15.0
+mypy-extensions==1.0.0
