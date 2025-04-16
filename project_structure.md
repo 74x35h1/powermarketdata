@@ -1,205 +1,153 @@
-# Power Market Data Project Structure
+# 電力市場データ収集プロジェクト - コード構造
 
-## Overview
-This project is designed to collect, process, and manage various power market data from multiple sources including JEPX, OCCTO, TSO, JMA, and various futures markets. The system is built with a modular architecture to ensure scalability and maintainability.
+## プロジェクト概要
 
-## Directory Structure
+このプロジェクトは、日本の電力市場データを収集・分析するための包括的なツールセットを提供します。主に以下の機能があります：
+
+1. 電力会社（TSO）からの需要・供給データのダウンロード
+2. JEPXからの市場価格データの取得
+3. データベースへの保存と分析
+
+## ディレクトリ構造
+
 ```
 powermarketdata/
-├─ main.py                     # CLI entry point
-├─ cli/
-│   └─ menu.py                 # CLI menu and selection logic
-├─ config/
-│   └─ settings.yaml           # Configuration management
-├─ data_sources/               # Data collection modules
-│   ├─ jepx_price.py           # JEPX spot price data
-│   ├─ jepx_bid.py             # JEPX bid data
-│   ├─ hjks.py                 # HJKS data
-│   ├─ jma_weather.py          # JMA weather data
-│   ├─ tso_demand.py           # TSO demand data
-│   ├─ occto_interconnection.py# OCCTO interconnection data
-│   ├─ occto_reserve.py        # OCCTO reserve data
-│   ├─ eex_futures.py          # EEX futures data
-│   ├─ tocom_futures.py        # TOCOM futures data
-│   ├─ ice_jkm.py              # ICE JKM futures
-│   ├─ ice_ttf.py              # ICE TTF futures
-│   ├─ ice_nc_coal.py          # ICE NC coal futures
-│   ├─ ice_dubai_crude.py      # ICE Dubai crude futures
-│   └─ ice_usdjpy_futures.py   # ICE USD/JPY futures
-├─ db/
-│   ├─ duckdb_connection.py    # DuckDB connection management
-│   └─ schema_definition.sql   # Database schema
-├─ ingestion/                  # ETL pipeline
-│   ├─ importer.py             # File import functionality
-│   └─ loader.py               # Data loading to DB
-├─ transformation/             # Data transformation
-│   └─ ml_dataset_builder.py   # ML dataset creation
-├─ exporter/                   # Data export
-│   └─ export_dataset.py       # Dataset export functionality
-└─ tests/                      # Test modules
-    └─ test_jepx.py            # JEPX module tests
+├── config/                    # 設定ファイル
+│   └── tso_urls.json         # TSO URLs設定
+├── data_sources/              # データソースパッケージ
+│   ├── __init__.py           # パッケージ初期化
+│   ├── db_connection.py      # データベース接続
+│   ├── jepx/                 # JEPX（日本卸電力取引所）データ
+│   │   ├── __init__.py
+│   │   ├── jepx_bid.py       # 入札データダウンローダー
+│   │   └── jepx_da_price.py  # 前日スポット価格ダウンローダー
+│   └── tso/                  # TSO（送電系統運用者）データ
+│       ├── __init__.py
+│       ├── db_importer.py    # データベースインポーター
+│       ├── tso_urls.py       # URL・エリア情報
+│       └── unified_downloader.py # 統合ダウンローダー
+├── examples/                  # サンプルコード
+│   ├── import_tso_data_to_db.py    # DBインポート例
+│   └── interactive_tso_downloader.py # 対話型CLIの例
+└── run_tso_cli.sh            # 対話型CLI実行スクリプト
 ```
 
-## Module Dependencies and Relationships
+## 主要モジュールと機能
 
-### 1. CLI Layer
-```
-main.py
-└─ cli/menu.py
-   ├─ config/settings.yaml
-   └─ data_sources/*
-```
-- **Dependencies**: 
-  - All data source modules
-  - PyYAML (configuration)
-- **Responsibilities**:
-  - User interaction
-  - Data source selection
-  - Command execution
+### データベース接続 (`data_sources/db_connection.py`)
 
-### 2. Data Source Modules
-```
-data_sources/
-├─ jepx_price.py
-│  ├─ requests
-│  ├─ pandas
-│  └─ db/duckdb_connection.py
-├─ jepx_bid.py
-│  ├─ requests
-│  ├─ pandas
-│  └─ db/duckdb_connection.py
-└─ futures/
-   ├─ eex_futures.py
-   │  ├─ requests
-   │  ├─ pandas
-   │  └─ db/duckdb_connection.py
-   └─ ice_*.py
-      ├─ requests
-      ├─ pandas
-      └─ db/duckdb_connection.py
-```
-- **Dependencies**:
-  - Requests (HTTP client)
-  - Pandas (data manipulation)
-  - DuckDB (database)
-- **Output**: Raw market data
-- **Used by**: Ingestion layer
+DuckDBへの接続と操作を提供する中心的なモジュールです。主な機能：
 
-### 3. Database Layer
-```
-db/
-├─ duckdb_connection.py
-│  ├─ duckdb
-│  └─ config/settings.yaml
-└─ schema_definition.sql
-```
-- **Dependencies**:
-  - DuckDB
-  - PyYAML
-- **Used by**: All data source and ingestion modules
+- データベース接続の初期化と管理
+- クエリ実行
+- データフレームの保存
+- エラーハンドリング
 
-### 4. Data Processing
-```
-ingestion/
-├─ importer.py
-│  ├─ pandas
-│  ├─ duckdb
-│  └─ db/duckdb_connection.py
-└─ loader.py
-   ├─ pandas
-   ├─ duckdb
-   └─ db/duckdb_connection.py
+DuckDBがインストールされていない場合はモックオブジェクトとして機能し、エラーを発生させずに処理を続行できます。
 
-transformation/
-└─ ml_dataset_builder.py
-   ├─ pandas
-   ├─ numpy
-   └─ db/duckdb_connection.py
+### TSO URLs・エリア情報 (`data_sources/tso/tso_urls.py`)
 
-exporter/
-└─ export_dataset.py
-   ├─ pandas
-   ├─ pyarrow
-   └─ db/duckdb_connection.py
-```
-- **Dependencies**:
-  - Pandas
-  - DuckDB
-  - PyArrow
-  - NumPy
+電力会社のURL、エリアコード、名前などのメタデータを管理します：
 
-## Technical Stack and Dependencies
+- URLの取得 (`get_tso_url`)
+- エリアコードの取得 (`get_area_code`) 
+- TSO名の取得 (`get_tso_name`)
+- エリアコードからTSOの検索 (`get_tso_by_area_code`)
 
-### Core Dependencies
-```txt
-duckdb>=0.9.2
-requests>=2.31.0
-pandas>=2.1.0
-pyyaml>=6.0.1
-python-dotenv>=1.0.0
-pytest>=7.4.0
-black>=23.9.1
-flake8>=6.1.0
-mypy>=1.5.1
+### 統合TSO ダウンローダー (`data_sources/tso/unified_downloader.py`)
+
+すべての電力会社からのデータを統一的にダウンロードする機能を提供します：
+
+- 単一または複数のTSOからのデータダウンロード
+- 需要データと供給データの両方に対応
+- ZIPファイルの自動処理
+- 異なるCSVフォーマットへの対応
+- 日付範囲指定ダウンロード
+
+### TSO データベースインポーター (`data_sources/tso/db_importer.py`)
+
+ダウンロードしたTSOデータをデータベースにインポートする機能を提供します：
+
+- データベーステーブルの自動作成と管理
+- データフレームの前処理とDB保存
+- コマンドライン引数のサポート
+- エラーハンドリングとロギング
+
+### JEPX データダウンローダー
+
+JEPX（日本卸電力取引所）からのデータ取得機能：
+
+- 入札データのダウンロード (`jepx_bid.py`)
+- 前日スポット価格データのダウンロード (`jepx_da_price.py`)
+
+## 主な使用例
+
+### 対話型インターフェース
+
+```bash
+# シェルスクリプトから実行
+./run_tso_cli.sh
+
+# または直接実行
+python data_sources/tso/unified_downloader.py
 ```
 
-### Version Compatibility
-- Python: 3.8 - 3.11
-- DuckDB: 0.9.2+
-- Pandas: 2.1.0+
-- Requests: 2.31.0+
+このインターフェースでは、ユーザーが対話的にTSOとデータ期間を選択し、需要データを表示できます。
 
-## Data Flow and Dependencies
+### データベースへのインポート
 
-1. **Data Collection**
-   ```
-   Source APIs → Data Source Modules → Configuration
-   ```
+```bash
+# コマンドラインから実行
+python data_sources/tso/db_importer.py --start-date 2024-01-01 --end-date 2024-01-31
 
-2. **Data Processing**
-   ```
-   Data Source Modules → Ingestion Layer → Database → Transformation Layer
-   ```
+# 特定のTSOのみ
+python data_sources/tso/db_importer.py --tso-id tepco --tso-id kepco
+```
 
-3. **Data Export**
-   ```
-   Transformation Layer → Export Layer → Output Formats (CSV, Parquet)
-   ```
+### プログラムからの使用
 
-## Development Status
+```python
+from data_sources import UnifiedTSODownloader, DuckDBConnection
+from datetime import date
 
-### Completed
-- [x] Basic project structure
-- [x] CLI menu system
-- [x] Database schema definition
-- [x] JEPX bid data downloader
+# ダウンローダーを初期化
+downloader = UnifiedTSODownloader(
+    tso_ids=['tepco', 'kepco'],
+    url_type='demand'
+)
 
-### In Progress
-- [ ] Implementation of remaining data source modules
-- [ ] Database connection management
-- [ ] ETL pipeline implementation
+# 特定期間のデータをダウンロード
+start_date = date(2024, 1, 1)
+end_date = date(2024, 1, 31)
+results = downloader.download_files(start_date, end_date)
 
-### Planned
-- [ ] ML dataset builder
-- [ ] Data export functionality
-- [ ] Comprehensive test suite
-- [ ] Documentation
+# DB接続を作成してデータを保存
+db = DuckDBConnection()
+for target_date, tso_id, df in results:
+    db.save_dataframe(df, 'tso_demand')
+```
 
-## Security and Performance Considerations
+## データベーススキーマ
 
-### Security
-- API key management through environment variables
-- Database credentials through configuration
-- HTTPS for all external API calls
+主なテーブル：
 
-### Performance
-- DuckDB for efficient data processing
-- Pandas for data manipulation
-- PyArrow for efficient data export
+1. **tso_demand** - 電力需要データ
+   - 日付、時間、需要実績、TSO情報など
 
-## Future Enhancements
-1. Real-time data streaming
-2. Advanced data validation
-3. Machine learning model integration
-4. Web API interface
-5. Data visualization dashboard 
+2. **tso_supply** - 電力供給データ
+   - 日付、時間、電源種別ごとの供給量など
+
+3. **tso_areas** - エリア情報マスタ
+   - TSO ID、名前、エリアコード、地域
+
+4. **jepx_da_price** - JEPX前日スポット価格
+   - 日付、時間帯、システムプライス、エリアプライスなど
+
+## 拡張ポイント
+
+このプロジェクトは以下の方向に拡張できます：
+
+1. 新しいデータソースの追加
+2. データ可視化機能の実装
+3. 予測モデルの統合
+4. Webインターフェースの開発 

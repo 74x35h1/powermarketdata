@@ -1,18 +1,58 @@
 -- JEPX Spot Market Data
-CREATE TABLE IF NOT EXISTS jepx_spot_prices (
-    date DATE,
-    hour INTEGER,
-    price DECIMAL(10,2),
-    volume DECIMAL(10,2),
-    PRIMARY KEY (date, hour)
+CREATE TABLE IF NOT EXISTS jepx_da_price (
+    date TEXT,
+    slot INTEGER,
+    sell_bid_qty_kwh INTEGER,
+    buy_bid_qty_kwh INTEGER,
+    contract_qty_kwh INTEGER,
+    ap0_system DECIMAL(5,2),
+    ap1_hokkaido DECIMAL(5,2),
+    ap2_tohoku DECIMAL(5,2),
+    ap3_tokyo DECIMAL(5,2),
+    ap4_chubu DECIMAL(5,2),
+    ap5_hokuriku DECIMAL(5,2),
+    ap6_kansai DECIMAL(5,2),
+    ap7_chugoku DECIMAL(5,2),
+    ap8_shikoku DECIMAL(5,2),
+    ap9_kyushu DECIMAL(5,2),
+    spot_avg_price DECIMAL(5,2),
+    alpha_upper_spot_avg_price DECIMAL(5,2),
+    alpha_lower_spot_avg_price DECIMAL(5,2),
+    alpha_flash_spot_avg_price DECIMAL(5,2),
+    alpha_confirmed_spot_avg_price DECIMAL(5,2),
+    avoidable_cost_national DECIMAL(5,2),
+    avoidable_cost_hokkaido DECIMAL(5,2),
+    avoidable_cost_tohoku DECIMAL(5,2),
+    avoidable_cost_tokyo DECIMAL(5,2),
+    avoidable_cost_chubu DECIMAL(5,2),
+    avoidable_cost_hokuriku DECIMAL(5,2),
+    avoidable_cost_kansai DECIMAL(5,2),
+    avoidable_cost_chugoku DECIMAL(5,2),
+    avoidable_cost_shikoku DECIMAL(5,2),
+    avoidable_cost_kyushu DECIMAL(5,2),
+    sell_block_bid_qty_kwh INTEGER,
+    sell_block_contract_qty_kwh INTEGER,
+    buy_block_bid_qty_kwh INTEGER,
+    buy_block_contract_qty_kwh INTEGER,    
+    fip_ref_price_national DECIMAL(5,2),
+    fip_ref_price_hokkaido DECIMAL(5,2),
+    fip_ref_price_tohoku DECIMAL(5,2),
+    fip_ref_price_tokyo DECIMAL(5,2),
+    fip_ref_price_chubu DECIMAL(5,2),
+    fip_ref_price_hokuriku DECIMAL(5,2),
+    fip_ref_price_kansai DECIMAL(5,2),
+    fip_ref_price_chugoku DECIMAL(5,2),
+    fip_ref_price_shikoku DECIMAL(5,2),
+    fip_ref_price_kyushu DECIMAL(5,2),
+    PRIMARY KEY (date, slot)
 );
 
 CREATE TABLE IF NOT EXISTS jepx_bid_curves (
-    date DATE,
-    hour INTEGER,
-    price DECIMAL(10,2),
-    volume DECIMAL(10,2),
-    PRIMARY KEY (date, hour, price)
+    id VARCHAR(20) PRIMARY KEY,  -- 20250401_48_1
+    date CHAR(8) NOT NULL,       -- YYYYMMDD
+    slot INT NOT NULL,           -- 時間帯
+    area_code INT NOT NULL,      -- エリアコード
+    bid JSON NOT NULL            -- JSON配列形式: 
 );
 
 -- Weather Data

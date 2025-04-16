@@ -5,6 +5,14 @@ import sys
 import time
 import random
 import argparse
+import csv
+import json
+import os
+from pathlib import Path
+
+# Add the project root to the Python path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 # 定数設定
 BASE_URL = "https://www.jepx.jp/js/csv_read.php"
@@ -47,6 +55,27 @@ def download_csv(date, dir_name):
         print(f"Error downloading {dir_name}_{date_str}.csv: {e}")
         return None
 
+def process_csv_to_json(csv_text):
+    data = {}
+    reader = csv.reader(csv_text.splitlines())
+    for row in reader:
+        if len(row) < 6:
+            continue
+        date, time_slot, price, sell_qty, buy_qty, area_seq = row[0], row[1], row[2], row[3], row[4], row[5]
+        key = (date, time_slot, area_seq)
+        order = {"price": price, "sell_qty": sell_qty, "buy_qty": buy_qty}
+        if key not in data:
+            data[key] = {
+                "date": date,
+                "time_slot": time_slot,
+                "area_seq": area_seq,
+                "orders": [order]
+            }
+        else:
+            data[key]["orders"].append(order)
+    records = list(data.values())
+    return json.dumps(records, indent=2)
+
 def download_and_display(start_date, end_date):
     """
     指定した期間内の日付について、各カテゴリーのCSVをダウンロードし、その内容を表示する。
@@ -61,7 +90,9 @@ def download_and_display(start_date, end_date):
                     text = content.decode('utf-8')
                 except UnicodeDecodeError:
                     text = content.decode('shift_jis', errors='replace')
-                print(text)
+                json_output = process_csv_to_json(text)
+                print("JSON Output:")
+                print(json_output)
                 print()
         sleep_time = random.randint(10, 20)
         print(f"Sleeping for {sleep_time} seconds...")

@@ -58,18 +58,22 @@ class DuckDBConnection:
             self._initialize_connection()
         return self._connection
 
-    def execute_query(self, query: str) -> Optional[duckdb.DuckDBPyRelation]:
+    def execute_query(self, query: str, params: tuple = None) -> Optional[duckdb.DuckDBPyRelation]:
         """
         Execute a SQL query.
         
         Args:
             query (str): SQL query to execute
+            params (tuple, optional): Parameters for the query
             
         Returns:
             Optional[duckdb.DuckDBPyRelation]: Query result if successful, None otherwise
         """
         try:
-            return self.get_connection().execute(query)
+            if params is not None:
+                return self._connection.execute(query, params)
+            else:
+                return self._connection.execute(query)
         except Exception as e:
             print(f"Error executing query: {e}")
             return None

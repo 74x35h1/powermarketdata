@@ -1,8 +1,8 @@
 """
-JEPX data source package.
-This package contains modules for fetching and processing JEPX market data.
+JEPX (Japan Electric Power Exchange) data source module.
+This module provides functionality to download and process JEPX data.
 """
 
-from .jepx_bid import download_csv, main
+from .jepx_bid import download_csv, main, JEPXBidDownloader
 
-__all__ = ['download_csv', 'main']
+__all__ = ['download_csv', 'main', 'JEPXBidDownloader']

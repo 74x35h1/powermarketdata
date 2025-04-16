@@ -1,0 +1,38 @@
+{
+    "tepco": {
+        "demand": "https://www.tepco.co.jp/forecast/html/images/eria_jukyu_{YYYY}{MM}_03.csv",
+        "supply": "https://www.tepco.co.jp/forecast/html/images/kyokyu-j.csv"
+    },
+    "kepco": {
+        "demand": "https://www.kansai-td.co.jp/yamasou/{YYYY}{MM}_jisseki.zip",
+        "supply": "https://www.kansai-td.co.jp/yamasou/area-performance-download.csv"
+    },
+    "tohoku": {
+        "demand": "https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{YYYY}{MM}_02.csv",
+        "supply": "https://setsuden.nw.tohoku-epco.co.jp/common/demand/supply_tohoku.csv"
+    },
+    "chugoku": {
+        "demand": "https://www.energia.co.jp/nw/jukyuu/sys/eria_jukyu_{YYYY}{MM}_07.csv",
+        "supply": "https://www.energia.co.jp/nw/jukyuu/sys/kyokyu-j.csv"
+    },
+    "shikoku": {
+        "demand": "https://www.yonden.co.jp/nw/supply_demand/csv/eria_jukyu_{YYYY}{MM}_08.csv",
+        "supply": "https://www.yonden.co.jp/nw/denkiyoho/supply_shikoku.csv"
+    },
+    "kyushu": {
+        "demand": "https://www.kyuden.co.jp/td_area_jukyu/csv/eria_jukyu_{YYYY}{MM}_09.csv",
+        "supply": "https://www.kyuden.co.jp/td_power_usages/csv/kyokyu-2019.csv"
+    },
+    "hokkaido": {
+        "demand": "https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{YYYY}{MM}_01.csv",
+        "supply": "https://denkiyoho.hepco.co.jp/area/data/supply_01_hokkaido.csv"
+    },
+    "chubu": {
+        "demand": "https://powergrid.chuden.co.jp/denki_yoho_content_data/eria_jukyu_{YYYY}.zip",
+        "supply": "https://powergrid.chuden.co.jp/denki_yoho_content_data/supply_chubu.csv"
+    },
+    "hokuriku": {
+        "demand": "https://www.rikuden.co.jp/nw/denki-yoho/csv/eria_jukyu_{YYYY}{MM}_05.csv",
+        "supply": "https://www.rikuden.co.jp/nw_jyukyu/csv/supply_hokuriku.csv"
+    }
+} 
