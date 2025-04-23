@@ -21,7 +21,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from data_sources.tso.unified_downloader import UnifiedTSODownloader
-from data_sources.tso.tso_urls import TSO_INFO
+from data_sources.tso.tso_urls import TSO_INFO, get_tso_id_from_area_code
 
 # ロギングを設定
 logging.basicConfig(
@@ -37,6 +37,68 @@ def print_header():
     print("=" * 60)
     print("\n日本の電力会社から需要データをダウンロードして表示します。")
     print("対象のエリアコードと取得したい月を選択してください。\n")
+
+def print_tso_choices():
+    """Print available TSO choices to the user."""
+    print("\nAvailable Area Codes:")
+    print("-" * 60)
+    print(f"{'Code':<6} {'TSO Name':<40} {'Region':<10}")
+    print("-" * 60)
+    
+    # Sort by area code for consistent display
+    sorted_tsos = sorted(TSO_INFO.items(), key=lambda x: x[1]['area_code'])
+    
+    for tso_id, info in sorted_tsos:
+        print(f"{info['area_code']:<6} {info['name']:<40} {info['region']:<10}")
+    
+    print("-" * 60)
+
+def get_area_code():
+    """Get area code selection from the user."""
+    while True:
+        # Get all available area codes
+        area_codes = sorted([info['area_code'] for info in TSO_INFO.values()])
+        
+        print("\nPlease enter the area code (e.g., 01, 02, 03...):")
+        area_code = input("Area code: ").strip()
+        
+        if area_code in area_codes:
+            return area_code
+        else:
+            print(f"Invalid area code. Please choose from: {', '.join(area_codes)}")
+
+def get_year_and_month():
+    """Get year and month from user input."""
+    today = datetime.now()
+    
+    while True:
+        try:
+            year_input = input(f"\nEnter year (YYYY) [default: {today.year}]: ").strip()
+            year = int(year_input) if year_input else today.year
+            
+            if year < 2010 or year > today.year + 1:
+                print(f"Please enter a year between 2010 and {today.year + 1}")
+                continue
+            
+            month_input = input(f"Enter month (1-12) [default: {today.month}]: ").strip()
+            month = int(month_input) if month_input else today.month
+            
+            if month < 1 or month > 12:
+                print("Please enter a month between 1 and 12")
+                continue
+            
+            # Check if the date is in the future
+            target_date = date(year, month, 1)
+            today_date = date(today.year, today.month, 1)
+            
+            if target_date > today_date:
+                confirm = input("The selected date is in the future. Continue? (y/n): ").lower()
+                if confirm != 'y':
+                    continue
+            
+            return year, month
+        except ValueError:
+            print("Please enter valid numbers for year and month")
 
 def display_tso_choices() -> Dict[str, str]:
     """
@@ -127,122 +189,97 @@ def get_date_selection() -> Tuple[int, int]:
     print(f"\n✓ 選択された期間: {year}年{month}月")
     return year, month
 
-def download_and_display_data(tso_ids: List[str], year: int, month: int) -> None:
+def download_and_display_data(area_code, year, month):
     """
-    指定されたTSOと年月のデータをダウンロードして表示します。
+    Download data for the specified area code and date.
     
     Args:
-        tso_ids: ダウンロードするTSO IDのリスト
-        year: 対象年
-        month: 対象月
-    """
-    print("\n" + "=" * 60)
-    print("  データのダウンロードを開始します  ".center(60))
-    print("=" * 60 + "\n")
-    
-    # ダウンローダーを初期化（DB接続なし）
-    downloader = UnifiedTSODownloader(
-        tso_ids=tso_ids,
-        db_connection=None,  # DB保存は実装しない
-        url_type='demand'
-    )
-    
-    # 対象月の初日
-    target_date = date(year, month, 1)
-    
-    all_results = []
-    
-    for tso_id in tso_ids:
-        tso_info = TSO_INFO[tso_id]
-        print(f"\n◆ [{tso_info['area_code']}] {tso_info['name']}のデータをダウンロード中...")
+        area_code (str): The area code to download data for
+        year (int): The year to download data for
+        month (int): The month to download data for
         
-        try:
-            # CSVデータをダウンロード
-            csv_content = downloader.download_csv(target_date, tso_id)
+    Returns:
+        pd.DataFrame or None: The downloaded data or None if download failed
+    """
+    try:
+        # Get TSO ID from area code
+        tso_id = get_tso_id_from_area_code(area_code)
+        if not tso_id:
+            print(f"No TSO found for area code {area_code}")
+            return None
+        
+        # Create target date
+        target_date = pd.Timestamp(year=year, month=month, day=1)
+        
+        # Create downloader
+        downloader = UnifiedTSODownloader(tso_id=tso_id)
+        
+        # Download data
+        data = downloader.download_for_month(target_date)
+        
+        if data is None or data.empty:
+            print(f"No data available for {tso_id} in {year}-{month:02d}")
+            return None
             
-            # CSVを処理
-            df = downloader.process_csv(csv_content, target_date, tso_id)
-            
-            if df is not None and not df.empty:
-                print(f"✓ データを正常に取得しました（{len(df)}行）")
-                
-                # 結果をリストに追加
-                all_results.append((tso_id, df))
-            else:
-                print("❌ データが空または取得できませんでした")
-                
-        except Exception as e:
-            print(f"❌ エラー: {str(e)}")
-    
-    # 結果の表示
-    if all_results:
-        display_results(all_results)
-    else:
-        print("\n❌ データを取得できませんでした。別の期間を試してください。")
+        return data
+        
+    except Exception as e:
+        logging.error(f"Error downloading data: {str(e)}", exc_info=True)
+        print(f"Error downloading data: {str(e)}")
+        return None
 
-def display_results(results: List[Tuple[str, pd.DataFrame]]) -> None:
+def display_results(df):
     """
-    ダウンロードしたデータを表示します。
+    Display the downloaded data.
     
     Args:
-        results: (tso_id, dataframe)のタプルのリスト
+        df (pd.DataFrame): The data to display
     """
-    print("\n" + "=" * 60)
-    print("  ダウンロードしたデータ  ".center(60))
-    print("=" * 60 + "\n")
+    # Display basic info
+    print(f"\nDownloaded data contains {len(df)} rows")
     
-    for tso_id, df in results:
-        tso_info = TSO_INFO[tso_id]
-        print(f"\n◆ [{tso_info['area_code']}] {tso_info['name']}")
-        print("-" * 60)
-        
-        # 表示する列を選択
-        display_columns = []
-        
-        # すべての利用可能な列を確認
-        for col in ['date', 'hour', 'time_slot', 'demand_actual', 'demand_forecast']:
-            if col in df.columns:
-                display_columns.append(col)
-        
-        # データフレームを表示
-        if display_columns:
-            print(df[display_columns].head(10).to_string(index=False))
-            
-            if len(df) > 10:
-                print(f"... 他 {len(df) - 10} 行")
-        else:
-            print(df.head(10).to_string(index=False))
-            
-            if len(df) > 10:
-                print(f"... 他 {len(df) - 10} 行")
-        
-        print("-" * 60)
+    # Show data summary
+    print("\nData summary:")
+    print(f"Time range: {df['datetime'].min()} to {df['datetime'].max()}")
+    
+    # Display the first few rows
+    print("\nSample data:")
+    print(df.head().to_string())
+    
+    # Ask if user wants to see more
+    if input("\nShow full dataset? (y/n): ").lower() == 'y':
+        pd.set_option('display.max_rows', None)
+        print(df.to_string())
+        pd.reset_option('display.max_rows')
 
 def main():
-    """メイン関数"""
+    """Run the interactive TSO data downloader CLI application."""
     try:
+        # Print application header
         print_header()
         
-        # TSO選択
-        tso_choices = display_tso_choices()
-        selected_tsos = get_tso_selection(tso_choices)
+        # Display TSO choices
+        print_tso_choices()
         
-        # 日付選択
-        year, month = get_date_selection()
+        # Get area code from user
+        area_code = get_area_code()
         
-        # データのダウンロードと表示
-        download_and_display_data(selected_tsos, year, month)
+        # Get year and month
+        year, month = get_year_and_month()
         
-        print("\n処理が完了しました。")
+        # Download and display data
+        print(f"\nDownloading data for area code {area_code} for {year}-{month:02d}...")
+        df = download_and_display_data(area_code, year, month)
+        
+        # Display results if data was downloaded
+        if df is not None:
+            display_results(df)
+            
+        print("\nThank you for using the TSO Data Downloader!")
         
     except KeyboardInterrupt:
-        print("\n\nプログラムが中断されました。")
-        return 1
-    except Exception as e:
-        print(f"\n\n予期せぬエラーが発生しました: {str(e)}")
-        return 1
-        
-    return 0
+        print("\n\nProcess interrupted by user. Exiting...")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

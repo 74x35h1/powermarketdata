@@ -30,54 +30,14 @@ except ImportError:
     DUCKDB_AVAILABLE = False
 
 class DuckDBConnection:
-    """DuckDBデータベース接続を管理するクラス"""
-    
-    _instance = None
-    _connection = None
-    
-    def __new__(cls, db_path: str = None):
-        """シングルトンパターンの実装"""
-        if not hasattr(cls, '_instance') or cls._instance is None:
-            cls._instance = super(DuckDBConnection, cls).__new__(cls)
-            cls._db_path = db_path or os.getenv("DB_PATH", "power_market_data.duckdb")
-            cls._connection = None
-        elif db_path and cls._db_path != db_path:
-            # 異なるDBパスが指定された場合は新しいインスタンスを作成
-            cls._instance = super(DuckDBConnection, cls).__new__(cls)
-            cls._db_path = db_path
-            cls._connection = None
-        return cls._instance
-    
+    """DuckDBデータベース接続を管理するクラス（インスタンスごとにdb_pathを持つ）"""
     def __init__(self, db_path: str = None):
-        """
-        DuckDBConnection初期化
-        
-        Args:
-            db_path: 使用するDuckDBファイルのパス（Noneの場合はデフォルト値）
-        """
-        if self._connection is None:
-            self._initialize_connection()
-    
-    def _initialize_connection(self):
-        """データベース接続を初期化"""
-        try:
-            if not DUCKDB_AVAILABLE:
-                logger.warning("DuckDBが利用できないため、モック接続を使用します")
-                return
-            
-            # ディレクトリが存在しない場合は作成
-            db_dir = os.path.dirname(os.path.abspath(self._db_path))
-            os.makedirs(db_dir, exist_ok=True)
-            
-            # DuckDBに接続
-            self._connection = duckdb.connect(self._db_path)
-            print(f"Connected to DuckDB at: {self._db_path}")
-        except Exception as e:
-            logger.error(f"データベース接続初期化エラー: {str(e)}")
-            # モック接続として続行
-            self._connection = None
-    
-    def execute_query(self, query: str, params: tuple = None) -> Any:
+        self.db_path = db_path or os.getenv("DB_PATH", "power_market_data.duckdb")
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+        self._connection = duckdb.connect(self.db_path)
+        print(f"Connected to DuckDB at: {self.db_path}")
+
+    def execute_query(self, query: str, params: tuple = None) -> Optional[Any]:
         """
         SQLクエリを実行
         
@@ -117,13 +77,11 @@ class DuckDBConnection:
             return len(df)
         
         try:
-            # データフレームをテーブルに追加
             self._connection.register("temp_df", df)
             self._connection.execute(f"INSERT INTO {table_name} SELECT * FROM temp_df")
             return len(df)
         except Exception as e:
             logger.error(f"データフレーム保存エラー: {str(e)}")
-            # テーブルが存在しない場合は作成を試みる
             try:
                 logger.info(f"テーブル {table_name} を作成します")
                 self._connection.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM temp_df LIMIT 0")

@@ -1,153 +1,180 @@
 #!/usr/bin/env python3
 """
-TSO (送電系統運用者) URLとエリア情報の管理モジュール
+日本の電力会社（TSO）に関するURLとメタデータ
 
-このモジュールは、日本の電力会社（TSO）のURLやエリア情報を管理する機能を提供します。
-設定ファイルからURLを読み込み、適切なフォーマットで提供します。
+このモジュールは、日本の各電力会社（TSO）のデータダウンロード用URLと
+各エリアに関する情報を提供します。
 """
 
-import os
-import sys
-import json
-from typing import Dict, List, Optional, Any, Union
-from pathlib import Path
+import logging
+from datetime import date
+from typing import Dict, Any, Optional
 
-# プロジェクトのルートディレクトリをパスに追加
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+logger = logging.getLogger(__name__)
 
-# 有効なTSO IDs
-VALID_TSO_IDS = [
-    'hokkaido',
-    'tohoku', 
-    'tepco', 
-    'chubu', 
-    'hokuriku', 
-    'kepco', 
-    'chugoku', 
-    'shikoku', 
-    'kyushu'
+# TSO ID: 電力会社コード
+TSO_IDS = [
+    "hokkaido", "tohoku", "tepco", "chubu", "hokuriku", "kansai", "chugoku", "shikoku", "kyushu", "okinawa"
 ]
 
-# TSO情報の辞書
-TSO_INFO: Dict[str, Dict[str, str]] = {
-    'hokkaido': {
-        'name': 'Hokkaido Electric Power Company',
-        'area_code': '01',
-        'region': 'Hokkaido'
+# TSOエリア情報
+TSO_INFO = {
+    "hokkaido": {
+        "id": "hokkaido", 
+        "name": "北海道電力", 
+        "area_code": "1",
+        "region": "北海道",
+        "demand_url": "https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{YYYY}{MM}_01.csv",
+        "supply_url": "https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{YYYY}{MM}_01.csv"
     },
-    'tohoku': {
-        'name': 'Tohoku Electric Power Company',
-        'area_code': '02',
-        'region': 'Tohoku'
+    "tohoku": {
+        "id": "tohoku", 
+        "name": "東北電力", 
+        "area_code": "2",
+        "region": "東北",
+        "demand_url": "https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{YYYY}{MM}_02.csv",
+        "supply_url": "https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{YYYY}{MM}_02.csv"
     },
-    'tepco': {
-        'name': 'Tokyo Electric Power Company',
-        'area_code': '03',
-        'region': 'Tokyo'
+    "tepco": {
+        "id": "tepco", 
+        "name": "東京電力", 
+        "area_code": "3",
+        "region": "関東",
+        "demand_url": "https://www.tepco.co.jp/forecast/html/images/eria_jukyu_{YYYY}{MM}_03.csv",
+        "supply_url": "https://www.tepco.co.jp/forecast/html/images/eria_jukyu_{YYYY}{MM}_03.csv"
     },
-    'chubu': {
-        'name': 'Chubu Electric Power Company',
-        'area_code': '04',
-        'region': 'Chubu'
+    "chubu": {
+        "id": "chubu", 
+        "name": "中部電力", 
+        "area_code": "4",
+        "region": "中部",
+        "demand_url": "https://powergrid.chuden.co.jp/denki_yoho_content_data/eria_jukyu_{YYYY}.zip",
+        "supply_url": "https://powergrid.chuden.co.jp/denki_yoho_content_data/eria_jukyu_{YYYY}.zip"
     },
-    'hokuriku': {
-        'name': 'Hokuriku Electric Power Company',
-        'area_code': '05',
-        'region': 'Hokuriku'
+    "hokuriku": {
+        "id": "hokuriku", 
+        "name": "北陸電力", 
+        "area_code": "5",
+        "region": "北陸",
+        "demand_url": "https://www.rikuden.co.jp/nw/denki-yoho/csv/eria_jukyu_{YYYY}{MM}_05.csv",
+        "supply_url": "https://www.rikuden.co.jp/nw/denki-yoho/csv/eria_jukyu_{YYYY}{MM}_05.csv"
     },
-    'kepco': {
-        'name': 'Kansai Electric Power Company',
-        'area_code': '06', 
-        'region': 'Kansai'
+    "kansai": {
+        "id": "kansai", 
+        "name": "関西電力", 
+        "area_code": "6",
+        "region": "関西",
+        "demand_url": "https://www.kansai-td.co.jp/yamasou/{YYYY}{MM}_jisseki.zip",
+        "supply_url": "https://www.kansai-td.co.jp/yamasou/{YYYY}{MM}_jisseki.zip"
     },
-    'chugoku': {
-        'name': 'Chugoku Electric Power Company',
-        'area_code': '07',
-        'region': 'Chugoku'
+    "chugoku": {
+        "id": "chugoku", 
+        "name": "中国電力", 
+        "area_code": "7",
+        "region": "中国",
+        "demand_url": "https://www.energia.co.jp/nw/jukyuu/sys/eria_jukyu_{YYYY}{MM}_07.csv",
+        "supply_url": "https://www.energia.co.jp/nw/jukyuu/sys/eria_jukyu_{YYYY}{MM}_07.csv"
     },
-    'shikoku': {
-        'name': 'Shikoku Electric Power Company',
-        'area_code': '08',
-        'region': 'Shikoku'
+    "shikoku": {
+        "id": "shikoku", 
+        "name": "四国電力", 
+        "area_code": "8",
+        "region": "四国",
+        "demand_url": "https://www.yonden.co.jp/nw/supply_demand/csv/eria_jukyu_{YYYY}{MM}_08.csv",
+        "supply_url": "https://www.yonden.co.jp/nw/supply_demand/csv/eria_jukyu_{YYYY}{MM}_08.csv"
     },
-    'kyushu': {
-        'name': 'Kyushu Electric Power Company',
-        'area_code': '09',
-        'region': 'Kyushu'
+    "kyushu": {
+        "id": "kyushu", 
+        "name": "九州電力", 
+        "area_code": "9",
+        "region": "九州",
+        "demand_url": "https://www.kyuden.co.jp/td_area_jukyu/csv/eria_jukyu_{YYYY}{MM}_09.csv",
+        "supply_url": "https://www.kyuden.co.jp/td_area_jukyu/csv/eria_jukyu_{YYYY}{MM}_09.csv"
+    },
+    "okinawa": {
+        "id": "okinawa", 
+        "name": "沖縄電力", 
+        "area_code": "10",
+        "region": "沖縄",
+        "demand_url": "https://www.okiden.co.jp/denki2/eria_jukyu_{YYYY}{MM}_10.csv",
+        "supply_url": "https://www.okiden.co.jp/denki2/eria_jukyu_{YYYY}{MM}_10.csv"
     }
 }
 
-def get_tso_url(tso_id: str, url_type: str = 'demand') -> Optional[str]:
+def get_tso_url(tso_id: str, url_type: str = 'demand', target_date: Optional[date] = None) -> str:
     """
-    指定されたTSOとURLタイプに対応するURLを取得
+    指定されたTSO IDとURLタイプに対応するURLを取得
     
     Args:
-        tso_id: TSO ID（例: 'tepco'）
-        url_type: URLタイプ（'demand'または'supply'）
+        tso_id: TSO ID (例: 'tepco', 'hokuriku')
+        url_type: URLタイプ ('demand'または'supply')
+        target_date: 対象日付。URLのプレースホルダーを置換するために使用
         
     Returns:
-        対応するURL文字列（見つからない場合はNone）
-    """
-    if tso_id not in VALID_TSO_IDS:
-        return None
+        URL文字列
         
-    try:
-        # 設定ファイルから読み込み
-        config_path = os.path.join(project_root, 'config', 'tso_urls.json')
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            
-        # 対応するURLを返す
-        if tso_id in config and url_type in config[tso_id]:
-            return config[tso_id][url_type]
-            
-        return None
-    except Exception as e:
-        print(f"Error loading TSO URL configuration: {e}")
-        return None
+    Raises:
+        ValueError: 無効なTSO IDまたはURLタイプが指定された場合
+    """
+    if tso_id not in TSO_INFO:
+        raise ValueError(f"無効なTSO ID: {tso_id}。有効なID: {list(TSO_INFO.keys())}")
+    
+    if url_type not in ['demand', 'supply']:
+        raise ValueError(f"無効なURLタイプ: {url_type}。'demand'または'supply'を指定してください")
+    
+    # URLの取得
+    url_key = f"{url_type}_url"
+    if url_key not in TSO_INFO[tso_id]:
+        logger.error(f"TSO {tso_id} に {url_type} タイプのURLが定義されていません")
+        raise ValueError(f"TSO {tso_id} に {url_type} タイプのURLが定義されていません")
+    
+    url = TSO_INFO[tso_id][url_key]
+    
+    # 日付が指定されている場合、URLにあるプレースホルダーを置換
+    if target_date:
+        try:
+            # {YYYY} -> 年、{MM} -> 月のフォーマットで置換
+            url = url.replace('{YYYY}', str(target_date.year))
+            url = url.replace('{MM}', f"{target_date.month:02d}")  # 2桁の月
+        except Exception as e:
+            logger.error(f"URL置換中にエラーが発生しました: {str(e)}")
+            raise ValueError(f"URLの日付プレースホルダー置換に失敗しました: {str(e)}")
+    
+    return url
 
-def get_area_code(tso_id: str) -> Optional[str]:
+def get_area_code_from_tso_id(tso_id: str) -> str:
     """
     TSO IDに対応するエリアコードを取得
     
     Args:
-        tso_id: TSO ID（例: 'tepco'）
+        tso_id: TSO ID
         
     Returns:
-        対応するエリアコード（見つからない場合はNone）
+        エリアコード文字列
+    
+    Raises:
+        ValueError: 無効なTSO IDが指定された場合
     """
-    if tso_id in TSO_INFO:
-        return TSO_INFO[tso_id]['area_code']
-    return None
+    if tso_id not in TSO_INFO:
+        raise ValueError(f"無効なTSO ID: {tso_id}")
+    
+    return TSO_INFO[tso_id]["area_code"]
 
-def get_tso_by_area_code(area_code: str) -> Optional[str]:
+def get_tso_id_from_area_code(area_code: str) -> str:
     """
     エリアコードに対応するTSO IDを取得
     
     Args:
-        area_code: エリアコード（例: '03'）
+        area_code: エリアコード
         
     Returns:
-        対応するTSO ID（見つからない場合はNone）
+        TSO ID
+    
+    Raises:
+        ValueError: 無効なエリアコードが指定された場合
     """
     for tso_id, info in TSO_INFO.items():
-        if info['area_code'] == area_code:
+        if info["area_code"] == str(area_code):
             return tso_id
-    return None
-
-def get_tso_name(tso_id: str) -> Optional[str]:
-    """
-    TSO IDに対応する電力会社名を取得
     
-    Args:
-        tso_id: TSO ID（例: 'tepco'）
-        
-    Returns:
-        対応する電力会社名（見つからない場合はNone）
-    """
-    if tso_id in TSO_INFO:
-        return TSO_INFO[tso_id]['name']
-    return None 
+    raise ValueError(f"無効なエリアコード: {area_code}") 

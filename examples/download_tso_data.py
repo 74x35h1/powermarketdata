@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_sources.tso.unified_downloader import UnifiedTSODownloader
 from data_sources.db_connection import DuckDBConnection
-from data_sources.tso.tso_urls import TSO_INFO
+# from data_sources.tso.tso_urls import get_tso_url, TSO_INFO
 
 # ロギングを設定
 logging.basicConfig(
@@ -25,6 +25,22 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+TSO_IDS = [
+    "hokkaido", "tohoku", "tepco", "chubu", "hokuriku", "kansai", "chugoku", "shikoku", "kyushu", "okinawa"
+]
+TSO_INFO = {
+    "hokkaido": {"name": "北海道電力", "area_code": 1},
+    "tohoku": {"name": "東北電力", "area_code": 2},
+    "tepco": {"name": "東京電力", "area_code": 3},
+    "chubu": {"name": "中部電力", "area_code": 4},
+    "hokuriku": {"name": "北陸電力", "area_code": 5},
+    "kansai": {"name": "関西電力", "area_code": 6},
+    "chugoku": {"name": "中国電力", "area_code": 7},
+    "shikoku": {"name": "四国電力", "area_code": 8},
+    "kyushu": {"name": "九州電力", "area_code": 9},
+    "okinawa": {"name": "沖縄電力", "area_code": 10}
+}
 
 def parse_args():
     """コマンドライン引数を解析します。"""
@@ -53,7 +69,7 @@ def parse_args():
     
     parser.add_argument(
         '--tso-id',
-        choices=list(TSO_INFO.keys()),
+        choices=TSO_IDS,
         help='特定の電力会社のデータをダウンロードする場合は、そのTSO IDを指定します'
     )
     
