@@ -17,17 +17,43 @@ sys.path.append(project_root)
 from db.duckdb_connection import DuckDBConnection
 
 class JEPXBidDownloader:
-    """JEPX bid data downloader class."""
+    """
+    JEPX bid data downloader class.
+    
+    with文で使用することで、ブロックを抜けた時に自動的にデータベース接続を閉じます。
+    """
     
     BASE_URL = "https://www.jepx.jp/js/csv_read.php"
     DIR_NAMES = ["spot_bid_curves", "spot_splitting_areas"]
     
-    def __init__(self):
-        """Initialize the downloader with database connection."""
-        self.db = DuckDBConnection()
-        self._ensure_tables_exist()
+    def __init__(self, db_path: str = None, read_only: bool = False):
+        """
+        Initialize JEPXBidDownloader.
+        
+        Args:
+            db_path: データベースファイルのパス（省略時はデフォルト）
+            read_only: 読み取り専用モードで接続する場合はTrue
+        """
+        # Database connection
+        self.db = DuckDBConnection(db_path, read_only=read_only)
+        
+        # Ensure the necessary tables exist
+        self._ensure_tables()
     
-    def _ensure_tables_exist(self):
+    def __enter__(self):
+        """コンテキストマネージャのエントリポイント"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """コンテキストマネージャの終了処理"""
+        # 明示的にDB接続をクローズ
+        try:
+            if hasattr(self, 'db') and self.db is not None:
+                self.db.close()
+        except Exception as e:
+            print(f"[WARN] JEPXBidDownloaderのコンテキスト終了時のDB接続クローズでエラー: {e}")
+    
+    def _ensure_tables(self):
         """Ensure necessary tables exist in the database."""
         self.db.execute_query("""
             CREATE TABLE IF NOT EXISTS jepx_bid_data (
@@ -215,9 +241,9 @@ def main():
         print("Error: Dates must be in YYYY-MM-DD format.")
         sys.exit(1)
     
-    downloader = JEPXBidDownloader()
-    downloader.download_and_save(start_date, end_date)
-    print("Download and database insertion completed.")
+    with JEPXBidDownloader() as downloader:
+        downloader.download_and_save(start_date, end_date)
+        print("Download and database insertion completed.")
 
 if __name__ == "__main__":
     main()

@@ -15,6 +15,7 @@ from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Union
 import re
+from calendar import monthrange
 
 # プロジェクトのルートディレクトリをパスに追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,13 +43,19 @@ class TSODataImporter:
     TSOデータをデータベースにインポートするクラス
     
     このクラスは、UnifiedTSODownloaderから取得したデータをデータベースに保存する機能を提供します。
+    with文で使用することで、ブロックを抜けた時に自動的にデータベース接続を閉じます。
     """
     
-    def __init__(self):
+    def __init__(self, db_path: str = None, read_only: bool = False):
         """
         TSOデータインポーターを初期化
+        
+        Args:
+            db_path: データベースファイルのパス（省略時はデフォルト）
+            read_only: 読み取り専用モードで接続する場合はTrue
         """
-        self.db = DuckDBConnection()
+        # データベース接続はコンテキストマネージャとして使用
+        self.db = DuckDBConnection(db_path, read_only=read_only)
         self.table_name = "tso_data"  # デフォルトテーブル名
         self._ensure_tables()
         
@@ -194,9 +201,6 @@ class TSODataImporter:
         total_inserted = 0
         
         try:
-            # データベーストランザクション開始
-            self.db.execute_query("BEGIN TRANSACTION")
-            
             # 各データフレームを処理
             for target_date, tso_id, df in data_list:
                 if df is None or df.empty:
@@ -289,8 +293,23 @@ class TSODataImporter:
                         if df['date'].iloc[0] is not None and isinstance(df['date'].iloc[0], str):
                             if df['date'].dtype == 'object':  # 文字列の場合のみ変換
                                 print(f"[DEBUG] 日付のフォーマット変換: {df['date'].iloc[0]} → ", end="")
-                                df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y%m%d')
-                                print(f"{df['date'].iloc[0]}")
+                                # 文字列から日付に変換
+                                df['date'] = pd.to_datetime(df['date'])
+                                
+                                # 未来の年を持つ日付を現在の年に修正
+                                current_year = datetime.now().year
+                                future_dates_mask = df['date'].dt.year > current_year
+                                if future_dates_mask.any():
+                                    # 未来の日付があれば、年だけ現在の年に置き換え
+                                    print(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
+                                    future_dates = df.loc[future_dates_mask, 'date']
+                                    df.loc[future_dates_mask, 'date'] = future_dates.apply(
+                                        lambda x: x.replace(year=current_year)
+                                    )
+                                
+                                    # 文字列形式に戻す - ISO形式に変更
+                                    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                                    print(f"{df['date'].iloc[0]}")
                 except Exception as e:
                     print(f"[ERROR] 日付フォーマット変換中にエラー: {str(e)}")
                     print(f"[DEBUG] 日付カラムの型: {df['date'].dtype}")
@@ -458,32 +477,13 @@ class TSODataImporter:
                         except Exception as e:
                             logger.error(f"統合テーブルへのデータ保存中にエラー: {str(e)}")
                             print(f"[ERROR] 統合テーブルへのデータ保存中にエラー: {str(e)}")
-            
-            # トランザクションをコミット
-            self.db.execute_query("COMMIT")
-            print(f"[INFO] トランザクションを正常にコミットしました。合計 {total_inserted} 行を挿入しました。")
+                               
+            return total_inserted
             
         except Exception as e:
-            # エラーが発生した場合はロールバック
-            try:
-                self.db.execute_query("ROLLBACK")
-                print(f"[INFO] トランザクションをロールバックしました。")
-            except Exception as rollback_error:
-                logger.error(f"ロールバックに失敗: {str(rollback_error)}")
-                print(f"[ERROR] ロールバックに失敗: {str(rollback_error)}")
-            
             logger.error(f"データインポート中にエラーが発生: {str(e)}")
             print(f"[ERROR] データインポート中にエラーが発生: {str(e)}")
             raise
-        finally:
-            # 処理完了時に必ずDBとの接続を閉じる
-            try:
-                self.db.close()
-                print(f"[INFO] データベース接続を閉じました。")
-            except Exception as close_error:
-                print(f"[ERROR] データベース接続を閉じる際にエラーが発生: {str(close_error)}")
-        
-        return total_inserted
     
     def import_from_downloader(
         self, 
@@ -493,60 +493,157 @@ class TSODataImporter:
         url_type: str = "demand"
     ) -> int:
         """
-        指定されたTSOとデータ期間のデータをダウンロードしてインポート
+        TSO統合ダウンローダーを使用してデータを取得しインポート
+        
         Args:
-            tso_ids: インポートするTSO IDのリスト（省略すると全TSO）
-            start_date: ダウンロード開始日（省略すると今日）
-            end_date: ダウンロード終了日（省略すると開始日）
-            url_type: ダウンロードするデータの種類（'demand'または'supply'）
+            tso_ids: 処理対象のTSO ID一覧（省略時は全て）
+            start_date: 開始日付（省略時は先月の1日）
+            end_date: 終了日付（省略時は先月の末日）
+            url_type: URLタイプ（'demand' または 'supply'）
+            
         Returns:
-            インポートされた行数の合計
+            インポートされた合計レコード数
         """
-        imported_rows = 0
+        # デフォルト値の設定
+        if not tso_ids:
+            tso_ids = TSO_IDS
+            
+        if not start_date or not end_date:
+            today = datetime.now().date()
+            # 先月を計算
+            if today.month == 1:
+                prev_month_year = today.year - 1
+                prev_month = 12
+            else:
+                prev_month_year = today.year
+                prev_month = today.month - 1
+            
+            if not start_date:
+                # 先月の初日
+                start_date = date(prev_month_year, prev_month, 1)
+            
+            if not end_date:
+                # 先月の末日
+                _, last_day = monthrange(prev_month_year, prev_month)
+                end_date = date(prev_month_year, prev_month, last_day)
+            
+        logger.info(f"{start_date} から {end_date} までの {', '.join(tso_ids)} データをダウンロード中")
+        
+        total_imported = 0
+        
         try:
-            # 日付のデフォルト値を設定
-            if start_date is None:
-                start_date = date.today()
-            if end_date is None:
-                end_date = start_date
+            # 各TSOエリアごとにデータをダウンロード
+            for tso_id in tso_ids:
+                try:
+                    # 各TSOごとに個別のダウンローダーを初期化（エラーを分離するため）
+                    downloader = UnifiedTSODownloader(tso_id=tso_id, url_type=url_type)
+                    
+                    # 指定した日付範囲のデータをダウンロード
+                    data_list = downloader.download_files(start_date, end_date)
+                    
+                    if not data_list:
+                        logger.warning(f"TSO {tso_id} のデータはダウンロードされませんでした")
+                        continue
+                    
+                    # トランザクション内でデータをインポート
+                    transaction_started = False
+                    try:
+                        # インポート前に対象データが既に存在するか確認
+                        # マスターキーリストを取得
+                        master_keys = []
+                        for _, _, df in data_list:
+                            if 'master_key' in df.columns and not df.empty:
+                                master_keys.extend(df['master_key'].tolist())
+                        
+                        # マスターキーが存在すれば重複チェック
+                        if master_keys:
+                            # トランザクション開始
+                            self.db.execute_query("BEGIN TRANSACTION")
+                            transaction_started = True
+                            
+                            # 既存のマスターキーを確認（エリア別テーブル）
+                            area_code = None
+                            if tso_id.lower() in ["hokkaido", "tohoku", "tepco", "chubu", "hokuriku", 
+                                                 "kansai", "chugoku", "shikoku", "kyushu", "okinawa"]:
+                                tso_to_area = {
+                                    "hokkaido": "1", "tohoku": "2", "tepco": "3", "chubu": "4", 
+                                    "hokuriku": "5", "kansai": "6", "chugoku": "7", "shikoku": "8", 
+                                    "kyushu": "9", "okinawa": "0"
+                                }
+                                area_code = tso_to_area.get(tso_id.lower())
+                            
+                            if area_code:
+                                area_table = self.area_tables.get(area_code)
+                                if area_table:
+                                    # 既存データがあるか確認（サンプルマスターキーで）
+                                    sample_keys = master_keys[:5]  # 最初の5つを確認
+                                    placeholders = ", ".join(["?"] * len(sample_keys))
+                                    
+                                    try:
+                                        check_query = f"SELECT COUNT(*) FROM {area_table} WHERE master_key IN ({placeholders})"
+                                        result = self.db.execute_query(check_query, sample_keys).fetchone()
+                                        existing_count = result[0] if result else 0
+                                        
+                                        if existing_count > 0:
+                                            logger.warning(f"TSO {tso_id} の一部データは既にインポート済みです（{existing_count}/{len(sample_keys)}サンプル）")
+                                            print(f"[INFO] 既存データを削除してからインポートしています")
+                                            
+                                            # 重複を防ぐために対象期間のデータを削除
+                                            # date条件で削除（yyyymmdd形式）
+                                            start_date_str = start_date.strftime('%Y%m%d')
+                                            end_date_str = end_date.strftime('%Y%m%d')
+                                            
+                                            # エリアテーブルからデータ削除
+                                            delete_query = f"DELETE FROM {area_table} WHERE CAST(date AS VARCHAR) >= '{start_date_str}' AND CAST(date AS VARCHAR) <= '{end_date_str}'"
+                                            self.db.execute_query(delete_query)
+                                            
+                                            # 統合テーブルからも対応するデータを削除
+                                            delete_tso_query = f"DELETE FROM {self.table_name} WHERE date >= '{start_date_str}' AND date <= '{end_date_str}' AND tso_id = '{tso_id}'"
+                                            self.db.execute_query(delete_tso_query)
+                                    except Exception as check_error:
+                                        logger.error(f"既存データ確認中にエラー: {check_error}")
+                            
+                            # データをインポート
+                            imported = self.import_data(data_list)
+                            total_imported += imported
+                            
+                            # コミット
+                            self.db.execute_query("COMMIT")
+                            transaction_started = False
+                            
+                            logger.info(f"TSO {tso_id} から {imported} 行をインポートしました")
+                        else:
+                            logger.warning(f"TSO {tso_id} のデータにマスターキーがありません")
+                    except Exception as tx_error:
+                        # トランザクションエラーが発生した場合はロールバック
+                        if transaction_started:
+                            try:
+                                self.db.execute_query("ROLLBACK")
+                            except Exception as rb_error:
+                                logger.error(f"ロールバックに失敗: {rb_error}")
+                        logger.error(f"TSO {tso_id} データのインポート中にエラー: {tx_error}")
+                except Exception as tso_error:
+                    logger.error(f"TSO {tso_id} の処理中にエラー: {tso_error}")
             
-            # 全TSO IDsをデフォルトとして使用
-            if tso_ids is None:
-                tso_ids = TSO_IDS
-                
-            logger.info(f"{start_date} から {end_date} までの {', '.join(tso_ids)} データをダウンロード中")
-            
-            # ダウンローダーを初期化
-            downloader = UnifiedTSODownloader(
-                tso_ids=tso_ids,
-                db_connection=None,  # DB接続はここでは使用しない
-                url_type=url_type
-            )
-            
-            # データをダウンロード（一括で）
-            results = downloader.download_files(start_date, end_date)
-            
-            # ダウンロードしたデータをインポート
-            imported_rows = self.import_data(results)
-            
-            logger.info(f"合計 {imported_rows} 行のデータをインポートしました")
-            return imported_rows
-        
+            return total_imported
         except Exception as e:
-            logger.error(f"データのインポートに失敗しました: {str(e)}")
-            print(f"[ERROR] データのインポートに失敗しました: {str(e)}")
-            raise
-        
-        finally:
-            # 処理完了時に必ずDBとの接続を閉じる
-            try:
-                if hasattr(self, 'db') and self.db is not None:
-                    self.db.close()
-                    print(f"[INFO] データベース接続を閉じました。")
-            except Exception as close_error:
-                print(f"[ERROR] データベース接続を閉じる際にエラーが発生: {str(close_error)}")
-        
-        return imported_rows
+            logger.error(f"データのインポートに失敗しました: {e}")
+            print(f"[ERROR] データのインポートに失敗しました: {e}")
+            return 0
+
+    # コンテキストマネージャサポート
+    def __enter__(self):
+        """コンテキストマネージャのエントリポイント"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """コンテキストマネージャの終了処理"""
+        # 明示的にDB接続をクローズ
+        try:
+            if hasattr(self, 'db') and self.db is not None:
+                self.db.close()
+        except Exception as e:
+            print(f"[WARN] TSODataImporterのコンテキスト終了時のDB接続クローズでエラー: {e}")
 
 
 def parse_args():
@@ -581,17 +678,17 @@ def main():
     
     try:
         # インポーターを初期化
-        importer = TSODataImporter()
-        
-        # データをダウンロードしてインポート
-        imported_rows = importer.import_from_downloader(
-            tso_ids=args.tso_ids,
-            start_date=args.start_date,
-            end_date=args.end_date
-        )
-        
-        logger.info(f"合計 {imported_rows} 行のデータをインポートしました")
-        return 0
+        with TSODataImporter(db_path=args.db_path) as importer:
+            
+            # データをダウンロードしてインポート
+            imported_rows = importer.import_from_downloader(
+                tso_ids=args.tso_ids,
+                start_date=args.start_date,
+                end_date=args.end_date
+            )
+            
+            logger.info(f"合計 {imported_rows} 行のデータをインポートしました")
+            return 0
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって処理が中断されました")

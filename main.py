@@ -54,54 +54,54 @@ class PowerMarketPortal:
         self.db_path = db_path or os.getenv("DB_PATH", "/Volumes/MacMiniSSD/powermarketdata/power_market_data")
         print(f"[main.py] PowerMarketPortal: Using DB file: {self.db_path}")
         logger.info(f"[main.py] PowerMarketPortal: Using DB file: {self.db_path}")
-        self.db = DuckDBConnection()
+        # db接続はメソッド内で with 文を使って行うため、ここでは初期化しない
+        self.db = None
     
     def __del__(self):
         """デストラクタ - インスタンスが破棄される際にDB接続を閉じる"""
-        if hasattr(self, 'db') and self.db is not None:
-            try:
-                self.db.close()
-                print(f"[INFO] main.py: PowerMarketPortalインスタンス破棄時にデータベース接続を閉じました")
-            except Exception as e:
-                print(f"[ERROR] PowerMarketPortalのデストラクタでデータベース接続を閉じる際にエラー: {e}")
+        # with文使用に変更したため、close不要
+        pass
                 
     def close(self):
         """明示的にリソースを解放するメソッド"""
-        if hasattr(self, 'db') and self.db is not None:
-            try:
-                self.db.close()
-                self.db = None
-                print(f"[INFO] main.py: PowerMarketPortalのclose()メソッドでデータベース接続を閉じました")
-            except Exception as e:
-                print(f"[ERROR] PowerMarketPortalのclose()メソッドでエラー: {e}")
+        # with文使用に変更したため、close不要
+        pass
     
-    def download_tso_data(self, start_date: date, end_date: date, tso_ids: Optional[List[str]] = None, url_type: str = "demand") -> int:
-        logger.info(f"TSOデータのダウンロード（{start_date}～{end_date}）, url_type={url_type}")
+    def download_tso_data(self, start_date: date, end_date: date, tso_ids: List[str], url_type: str = "demand") -> int:
+        """
+        指定した電力会社エリアのデータをダウンロードする
+        
+        Args:
+            start_date: 開始日
+            end_date: 終了日
+            tso_ids: TSOエリアIDのリスト（必須）
+            url_type: データタイプ（"demand"または"supply"）
+            
+        Returns:
+            インポートされた行数
+        """
+        if not tso_ids:
+            logger.error("TSOエリアIDが指定されていません。少なくとも1つのエリアを指定してください。")
+            print("[ERROR] TSOエリアIDが指定されていません。少なくとも1つのエリアを指定してください。")
+            return 0
+            
+        logger.info(f"TSOデータのダウンロード（{start_date}～{end_date}）, url_type={url_type}, tso_ids={tso_ids}")
         imported_rows = 0
-        importer = None
+        
         try:
-            importer = TSODataImporter()
-            imported_rows = importer.import_from_downloader(
-                tso_ids=tso_ids,
-                start_date=start_date,
-                end_date=end_date,
-                url_type=url_type
-            )
+            with TSODataImporter() as importer:
+                imported_rows = importer.import_from_downloader(
+                    tso_ids=tso_ids,
+                    start_date=start_date,
+                    end_date=end_date,
+                    url_type=url_type
+                )
             logger.info(f"{imported_rows}行のTSOデータを保存しました")
             return imported_rows
         except Exception as e:
             logger.error(f"TSOデータのダウンロード中にエラーが発生: {e}")
             print(f"[ERROR] TSOデータのダウンロード中にエラーが発生: {e}")
             return 0
-        finally:
-            # データベース接続をクリーンアップ
-            if importer and hasattr(importer, 'db'):
-                try:
-                    importer.db.close()
-                    print(f"[INFO] main.py: TSOインポート後にデータベース接続を閉じました")
-                except Exception as close_error:
-                    logger.error(f"データベース接続のクローズに失敗: {close_error}")
-                    print(f"[ERROR] データベース接続のクローズに失敗: {close_error}")
     
     def download_jepx_price(self, url: Optional[str] = None) -> int:
         """
@@ -114,8 +114,10 @@ class PowerMarketPortal:
             インポートされた行数
         """
         logger.info("JEPXスポット価格データのダウンロード")
-        downloader = JEPXDAPriceDownloader()
-        rows = downloader.fetch_and_store(url)
+        
+        with JEPXDAPriceDownloader() as downloader:
+            rows = downloader.fetch_and_store(url)
+            
         logger.info(f"{rows}行のJEPXスポット価格データを保存しました")
         return rows
     
@@ -125,6 +127,46 @@ class PowerMarketPortal:
         # 依存性を外すためにシンプルなMenuの呼び出しに変更
         menu = Menu()
         menu.run()
+
+def display_tso_choices():
+    """TSO選択肢を表示して選択用のマッピングを返します"""
+    tso_ids = {
+        "hokkaido": {"name": "Hokkaido Electric Power Network", "area_code": "1"},
+        "tohoku": {"name": "Tohoku Electric Power Network", "area_code": "2"},
+        "tepco": {"name": "TEPCO Power Grid", "area_code": "3"},
+        "chubu": {"name": "Chubu Electric Power Grid", "area_code": "4"},
+        "hokuriku": {"name": "Hokuriku Electric Power Company", "area_code": "5"},
+        "kansai": {"name": "Kansai Electric Power", "area_code": "6"},
+        "chugoku": {"name": "Chugoku Electric Power", "area_code": "7"},
+        "shikoku": {"name": "Shikoku Electric Power Company", "area_code": "8"},
+        "kyushu": {"name": "Kyushu Electric Power", "area_code": "9"}
+    }
+    
+    print("\nTSO Area Selection:")
+    print("-" * 60)
+    print(f"{'No.':<4} {'Area Code':<10} {'TSO Name':<30}")
+    print("-" * 60)
+    
+    tso_choice_map = {}
+    
+    # 番号付きでTSOリストを表示
+    for i, (tso_id, info) in enumerate(sorted(tso_ids.items(), key=lambda x: x[1]['area_code']), 1):
+        print(f"{i:<4} {info['area_code']:<10} {info['name']:<30}")
+        tso_choice_map[str(i)] = tso_id
+    
+    print("-" * 60)
+    
+    return tso_choice_map
+
+def get_tso_selection(tso_choice_map):
+    """ユーザーからTSO選択を取得します"""
+    while True:
+        choice = input("Select area (enter number): ").strip()
+        
+        if choice in tso_choice_map:
+            return [tso_choice_map[choice]]  # 選択されたTSO
+        else:
+            print(f"Invalid selection. Please enter a number between 1-{len(tso_choice_map)}")
 
 def parse_args():
     """コマンドライン引数をパース"""
@@ -146,19 +188,20 @@ def parse_args():
         "--start-date",
         type=lambda d: datetime.strptime(d, "%Y-%m-%d").date(),
         help="開始日（YYYY-MM-DD形式）",
-        default=(date.today() - timedelta(days=7)),
+        default=(date.today() - timedelta(days=30)),
     )
     tso_data_parser.add_argument(
         "--end-date",
         type=lambda d: datetime.strptime(d, "%Y-%m-%d").date(),
         help="終了日（YYYY-MM-DD形式）",
-        default=date.today(),
+        default=(date.today() - timedelta(days=1)),
     )
     tso_data_parser.add_argument(
         "--tso-ids",
         type=str,
         nargs="+",
-        help="処理対象のTSO ID（例: tepco hokkaido）指定しない場合は全て",
+        required=False,
+        help="処理対象のTSO ID（例: tepco hokkaido）- 省略した場合はインタラクティブに選択",
     )
     
     # JEPXスポット価格ダウンロード
@@ -183,11 +226,17 @@ def main():
     
     try:
         if args.command == "tso-data":
-            print(f"Downloading TSO data from {args.start_date} to {args.end_date}...")
+            # TSO IDが指定されていない場合はインタラクティブに選択
+            tso_ids = args.tso_ids
+            if not tso_ids:
+                tso_choice_map = display_tso_choices()
+                tso_ids = get_tso_selection(tso_choice_map)
+                
+            print(f"Downloading TSO data from {args.start_date} to {args.end_date} for areas: {', '.join(tso_ids)}...")
             rows = portal.download_tso_data(
                 start_date=args.start_date,
                 end_date=args.end_date,
-                tso_ids=args.tso_ids
+                tso_ids=tso_ids
             )
             print(f"Successfully imported {rows} rows of TSO data")
         elif args.command == "jepx-price":

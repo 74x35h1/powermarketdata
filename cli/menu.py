@@ -81,8 +81,15 @@ class Menu:
     def _get_month_range(self):
         """ユーザーに月範囲を入力してもらう（YYYY-MM形式）"""
         today = date.today()
-        default_year = today.year
-        default_month = today.month
+        
+        # デフォルト値を現在の月ではなく、前月に設定
+        if today.month == 1:
+            default_year = today.year - 1
+            default_month = 12
+        else:
+            default_year = today.year
+            default_month = today.month - 1
+            
         try:
             start_input = input(f"Enter start month (YYYY-MM) [default: {default_year}-{default_month:02d}]: ").strip()
             if not start_input:
@@ -106,19 +113,59 @@ class Menu:
             print("Invalid month format. Using default values.")
             return date(default_year, default_month, 1), date(default_year, default_month, monthrange(default_year, default_month)[1])
 
+    def _display_tso_choices(self):
+        """TSO選択用の番号付きリストを表示します"""
+        tso_ids = {
+            "hokkaido": {"name": "Hokkaido Electric Power Network", "area_code": "1"},
+            "tohoku": {"name": "Tohoku Electric Power Network", "area_code": "2"},
+            "tepco": {"name": "TEPCO Power Grid", "area_code": "3"},
+            "chubu": {"name": "Chubu Electric Power Grid", "area_code": "4"},
+            "hokuriku": {"name": "Hokuriku Electric Power Company", "area_code": "5"},
+            "kansai": {"name": "Kansai Electric Power", "area_code": "6"},
+            "chugoku": {"name": "Chugoku Electric Power", "area_code": "7"},
+            "shikoku": {"name": "Shikoku Electric Power Company", "area_code": "8"},
+            "kyushu": {"name": "Kyushu Electric Power", "area_code": "9"}
+        }
+        
+        print("\nTSO Area Selection:")
+        print("-" * 60)
+        print(f"{'No.':<4} {'Area Code':<10} {'TSO Name':<30}")
+        print("-" * 60)
+        
+        tso_choice_map = {}
+        
+        # 番号付きでTSOリストを表示
+        for i, (tso_id, info) in enumerate(sorted(tso_ids.items(), key=lambda x: x[1]['area_code']), 1):
+            print(f"{i:<4} {info['area_code']:<10} {info['name']:<30}")
+            tso_choice_map[str(i)] = tso_id
+        
+        print("-" * 60)
+        
+        return tso_choice_map
+    
+    def _get_tso_selection(self, tso_choice_map):
+        """ユーザーからTSO選択を取得します"""
+        while True:
+            choice = input("Select area (enter number): ").strip()
+            
+            if choice in tso_choice_map:
+                return [tso_choice_map[choice]]  # 選択されたTSO
+            else:
+                print(f"Invalid selection. Please enter a number between 1-{len(tso_choice_map)}")
+    
     def _download_tso_demand(self):
         print("[Starting retrieval of Supply and Demand Data from TSO...]")
         # 月範囲を取得
         start_date, end_date = self._get_month_range()
-        # TSO IDを指定するか選択
-        use_specific_tsos = input("Do you want to specify TSO IDs? (y/n) [n]: ").strip().lower() == 'y'
-        tso_ids = None
-        if use_specific_tsos:
-            tso_input = input("Enter TSO IDs separated by space (e.g., tepco hokkaido): ").strip()
-            if tso_input:
-                tso_ids = tso_input.split()
+        
+        # 番号付きのTSO選択リストを表示
+        tso_choice_map = self._display_tso_choices()
+        tso_ids = self._get_tso_selection(tso_choice_map)
+        
         try:
             print(f"\nDownloading TSO demand data for {start_date.strftime('%Y-%m')} to {end_date.strftime('%Y-%m')}...")
+            print(f"Selected areas: {', '.join(tso_ids)}")
+            
             demand_rows = self.portal.download_tso_data(
                 start_date=start_date,
                 end_date=end_date,

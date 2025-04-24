@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS jma_weather (
 -- TSO全エリア横持ちデータテーブル
 CREATE TABLE IF NOT EXISTS tso_data (
     master_key VARCHAR PRIMARY KEY,
-    date DATE,
+    date VARCHAR,
     slot INTEGER,
     "1_area_demand" DOUBLE,
     "1_nuclear" DOUBLE,
@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS futures_prices (
 CREATE TABLE IF NOT EXISTS tso_area_1_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS tso_area_1_data (
 CREATE TABLE IF NOT EXISTS tso_area_2_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS tso_area_2_data (
 CREATE TABLE IF NOT EXISTS tso_area_3_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS tso_area_3_data (
 CREATE TABLE IF NOT EXISTS tso_area_4_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS tso_area_4_data (
 CREATE TABLE IF NOT EXISTS tso_area_5_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -390,7 +390,7 @@ CREATE TABLE IF NOT EXISTS tso_area_5_data (
 CREATE TABLE IF NOT EXISTS tso_area_6_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -413,7 +413,7 @@ CREATE TABLE IF NOT EXISTS tso_area_6_data (
 CREATE TABLE IF NOT EXISTS tso_area_7_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -436,7 +436,7 @@ CREATE TABLE IF NOT EXISTS tso_area_7_data (
 CREATE TABLE IF NOT EXISTS tso_area_8_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,
@@ -459,7 +459,7 @@ CREATE TABLE IF NOT EXISTS tso_area_8_data (
 CREATE TABLE IF NOT EXISTS tso_area_9_data (
     master_key VARCHAR PRIMARY KEY,
     date TEXT,
-    slot VARCHAR,
+    slot INTEGER,
     area_demand DOUBLE,
     nuclear DOUBLE,
     LNG DOUBLE,

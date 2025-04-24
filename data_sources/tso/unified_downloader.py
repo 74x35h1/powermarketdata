@@ -18,6 +18,21 @@ from datetime import date, datetime, timedelta
 from typing import List, Dict, Tuple, Optional, Any, Union
 import random
 import time
+import urllib3
+import ssl
+import numpy as np
+
+# SSLの証明書検証警告を無効化（セキュリティ上の注意が必要）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 古いSSLプロトコルを使用するための設定
+try:
+    # デフォルトのSSLコンテキストを変更（古いサーバーに対応）
+    old_https_context = ssl._create_default_https_context
+    ssl._create_default_https_context = ssl._create_unverified_context
+except AttributeError:
+    # 古いPythonバージョンではこの設定は無視される
+    pass
 
 # プロジェクトのルートディレクトリをパスに追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -114,26 +129,32 @@ class UnifiedTSODownloader:
             raise ValueError("TSO IDが指定されていません")
         
         try:
-            # tso_urls.pyに依存せず、直接URLを生成
-            year_month = f"{target_date.year}{target_date.month:02d}"
+            # 日付が指定されていない場合、現在の日付を使用
+            if target_date is None:
+                target_date = datetime.now().date()
+
+            # URLに使用する年月を取得
+            year = target_date.year
+            month = target_date.month
+            year_month = f"{year}{month:02d}"
             
-            # 各TSOごとのURL形式を定義
+            # 各TSOごとのURL形式を定義（固定年を使わず、引数の日付を使用）
             tso_url_templates = {
                 "hokkaido": {
                     "demand": f"https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{year_month}_01.csv",
                     "supply": f"https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{year_month}_01.csv"
                 },
                 "tohoku": {
-                    "demand": f"https://www.tohoku-epco.co.jp/NW/toririkumidata/juyo-download/juyo_tohoku_{year_month}.csv",
-                    "supply": f"https://www.tohoku-epco.co.jp/NW/toririkumidata/juyo-download/juyo_tohoku_{year_month}.csv"
+                    "demand": f"https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{year_month}_02.csv",
+                    "supply": f"https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{year_month}_02.csv"
                 },
                 "tepco": {
-                    "demand": f"https://www.tepco.co.jp/forecast/html/area_data/2025_area_data_{year_month}.csv",
-                    "supply": f"https://www.tepco.co.jp/forecast/html/area_data/2025_area_data_{year_month}.csv"
+                    "demand": f"https://www.tepco.co.jp/forecast/html/area_data/{year}_area_data_{year_month}.csv",
+                    "supply": f"https://www.tepco.co.jp/forecast/html/area_data/{year}_area_data_{year_month}.csv"
                 },
                 "chubu": {
-                    "demand": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/2025.zip",
-                    "supply": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/2025.zip"
+                    "demand": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/{year}.zip",
+                    "supply": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/{year}.zip"
                 },
                 "hokuriku": {
                     "demand": f"https://www.rikuden.co.jp/nw_jyukyuu/csv/area_{year_month}.csv",
@@ -214,57 +235,109 @@ class UnifiedTSODownloader:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             
-            # 中部電力のURL特殊処理（2025年ではなく現在利用可能な年を試す）
-            if tso_id == 'chubu' and '2025.zip' in url:
-                # 現在年以降は未来のデータなので存在しない可能性が高い
-                # 現在の年または1年前のデータでテスト
+            # 中部電力のURL特殊処理（最新のデータを探す）
+            if tso_id == 'chubu' and '.zip' in url:
+                # 現在の年から過去に遡って利用可能なデータを探す
                 current_year = datetime.now().year
-                alt_years = [current_year, current_year - 1]
+                test_years = [current_year, current_year - 1, current_year - 2]
                 
-                for alt_year in alt_years:
-                    alt_url = url.replace('2025.zip', f"{alt_year}.zip")
+                # もし指定された年が現在より新しい場合はスキップ
+                year_in_url = int(re.search(r'/(\d{4})\.zip', url).group(1))
+                if year_in_url > current_year:
+                    logger.warning(f"指定された年 {year_in_url} は未来のため、利用可能な過去のデータを探します")
+                    test_years = [current_year, current_year - 1, current_year - 2]
+                else:
+                    # 指定された年を最初に試す
+                    test_years = [year_in_url] + [y for y in test_years if y != year_in_url]
+                
+                original_url = url
+                for alt_year in test_years:
+                    # 元のURLの年部分を置換
+                    alt_url = re.sub(r'/(\d{4})\.zip', f'/{alt_year}.zip', original_url)
                     logger.info(f"中部電力の代替URL: {alt_url} を試行")
                     
-                    alt_response = requests.get(alt_url, headers=headers)
+                    alt_response = requests.get(alt_url, headers=headers, verify=False)
                     if alt_response.status_code == 200:
                         url = alt_url
+                        # 年が変わったので日付も調整
+                        if alt_year != target_date.year:
+                            target_date = date(alt_year, target_date.month, target_date.day)
+                            logger.info(f"日付を調整: {target_date}")
                         break
                 else:
                     logger.warning(f"中部電力の利用可能なデータが見つかりません")
             
-            # 関西電力のURL特殊処理（2025年ではなく現在利用可能な年を試す）
-            if tso_id == 'kepco' and '202501_jisseki.zip' in url:
-                # 現在の年または1年前のデータでテスト
+            # 関西電力のURL特殊処理（年月別データを探す）
+            if tso_id == 'kansai' and '_jisseki.zip' in url:
+                # 現在から過去に遡ってデータを探す
                 current_year = datetime.now().year
                 current_month = datetime.now().month
                 
-                test_dates = [
-                    (current_year, current_month - 1),  # 先月
-                    (current_year, current_month - 2),  # 先々月
-                    (current_year - 1, 12)              # 去年の12月
-                ]
+                # テスト対象の年月を生成
+                test_dates = []
+                # 最初に指定された日付を試す
+                test_dates.append((target_date.year, target_date.month))
                 
-                # 月が0以下になる場合の調整
-                test_dates = [(y if m > 0 else y - 1, m if m > 0 else 12 + m) for y, m in test_dates]
+                # 次に現在の月から1ヶ月前、2ヶ月前を試す
+                for i in range(1, 4):
+                    test_year = current_year
+                    test_month = current_month - i
+                    if test_month <= 0:
+                        test_month += 12
+                        test_year -= 1
+                    test_dates.append((test_year, test_month))
                 
+                # 重複を削除
+                test_dates = list(dict.fromkeys(test_dates))
+                
+                original_url = url
                 for test_year, test_month in test_dates:
-                    alt_url = url.replace('202501_jisseki.zip', f"{test_year}{test_month:02d}_jisseki.zip")
+                    # URLの年月部分を置換
+                    alt_url = re.sub(r'(\d{4})(\d{2})_jisseki\.zip', f'{test_year}{test_month:02d}_jisseki.zip', original_url)
+                    if alt_url == original_url:  # パターンに一致しない場合
+                        alt_url = re.sub(r'ji_(\d{4})(\d{2})\.csv', f'ji_{test_year}{test_month:02d}.csv', original_url)
+                    
                     logger.info(f"関西電力の代替URL: {alt_url} を試行")
                     
-                    alt_response = requests.get(alt_url, headers=headers)
+                    alt_response = requests.get(alt_url, headers=headers, verify=False)
                     if alt_response.status_code == 200:
                         url = alt_url
                         # 日付を調整して正しい月のデータを処理
                         target_date = date(test_year, test_month, 1)
+                        logger.info(f"日付を調整: {target_date}")
                         break
                 else:
                     logger.warning(f"関西電力の利用可能なデータが見つかりません")
             
-            # 中部電力や関西電力の場合、クエリパラメータは不要（URL自体に年が含まれるため）
-            if (tso_id == 'chubu' or tso_id == 'kepco') and '.zip' in url:
-                response = requests.get(url, headers=headers)
+            # 東北電力の特殊処理（異なるバージョン番号を試す）
+            if tso_id == 'tohoku' and 'eria_jukyu_' in url:
+                # 元のURL
+                original_url = url
+                # バージョン番号を変えて試行
+                version_numbers = ['01', '02', '03', '04', '05']
+                
+                for version in version_numbers:
+                    # URLのバージョン部分を置換 (_XX.csv)
+                    alt_url = re.sub(r'_\d{2}\.csv$', f'_{version}.csv', original_url)
+                    
+                    logger.info(f"東北電力の代替URL: {alt_url} を試行")
+                    
+                    try:
+                        alt_response = requests.get(alt_url, headers=headers, verify=False)
+                        if alt_response.status_code == 200 and alt_response.text.strip():
+                            url = alt_url
+                            logger.info(f"東北電力の有効なURL: {url}")
+                            break
+                    except requests.RequestException:
+                        continue
+                else:
+                    logger.warning(f"東北電力の利用可能なデータが見つかりません")
+            
+            # ZIPファイルの場合、クエリパラメータは不要（URL自体に年が含まれるため）
+            if '.zip' in url.lower():
+                response = requests.get(url, headers=headers, verify=False)
             else:
-                response = requests.get(url, params=params, headers=headers)
+                response = requests.get(url, params=params, headers=headers, verify=False)
                 
             response.raise_for_status()
             
@@ -482,18 +555,54 @@ class UnifiedTSODownloader:
                 logger.info("ヘッダー行を検出しました。この行を除外します。")
                 df_result = df_result.iloc[1:].copy()  # ヘッダー行を除外
         
-        # 日付列を適切に変換 - 時間部分なしの日付のみ
+        # 日付列を適切に変換 - yyyymmdd形式に変換
         try:
             # 文字列として取得し、日付部分のみを抽出
             df_result['date'] = pd.to_datetime(df_result['date'], errors='coerce')
             # 無効な日付の行を除外
             df_result = df_result.dropna(subset=['date'])
-            # 日付のみを文字列で保持 (YYYY-MM-DD形式)
-            df_result['date'] = df_result['date'].dt.strftime('%Y-%m-%d')
+            # 日付をyyyymmdd形式の文字列に変換
+            df_result['date'] = df_result['date'].dt.strftime('%Y%m%d')
             logger.info(f"日付変換後のサンプル: {df_result['date'].head(3).tolist()}")
         except Exception as e:
             logger.error(f"日付変換エラー: {str(e)}")
             logger.debug(f"変換前の値（最初の5つ）: {df_result['date'].head(5).tolist()}")
+            
+            # エラー発生時のフォールバック処理を追加
+            try:
+                # フォールバック: 手動で日付形式を変換
+                def convert_date_manually(date_str):
+                    if pd.isna(date_str) or not isinstance(date_str, str):
+                        return None
+                        
+                    # YYYYMMDDなどの数値のみの場合
+                    if isinstance(date_str, str) and date_str.isdigit() and len(date_str) == 8:
+                        return date_str
+                        
+                    # すでにYYYY-MM-DD形式の場合はyyyymmdd形式に変換
+                    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                        return date_str.replace('-', '')
+                        
+                    # スラッシュを含む日付形式 (YYYY/MM/DD) を変換
+                    if '/' in date_str:
+                        parts = date_str.split('/')
+                        if len(parts) == 3:
+                            # 日本の標準形式はYYYY/MM/DD
+                            if len(parts[0]) == 4:  # YYYY/MM/DD
+                                return f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
+                            elif len(parts[2]) == 4:  # MM/DD/YYYY
+                                return f"{parts[2]}{parts[0].zfill(2)}{parts[1].zfill(2)}"
+                    
+                    # それ以外の場合はNoneを返す
+                    return None
+                    
+                # 手動変換を適用
+                df_result['date'] = df_result['date'].apply(convert_date_manually)
+                # 無効な日付の行を除外
+                df_result = df_result.dropna(subset=['date'])
+                logger.info(f"手動日付変換後のサンプル: {df_result['date'].head(3).tolist()}")
+            except Exception as fallback_err:
+                logger.error(f"日付のフォールバック変換にも失敗: {str(fallback_err)}")
         
         # 時間スロットの形式を統一
         try:
@@ -510,8 +619,13 @@ class UnifiedTSODownloader:
                 match = re.search(time_pattern, time_str)
                 if match:
                     hour, minute = match.groups()
-                    return f"{int(hour):02d}:{int(minute):02d}"
-                return time_str
+                    # スロット番号に変換 (00:00→1, 00:30→2, ...)
+                    return int(hour) * 2 + (1 if int(minute) == 30 else 0) + 1
+                # 既に数値形式の場合
+                try:
+                    return int(time_str)
+                except:
+                    return time_str
             
             df_result['slot'] = df_result['slot'].apply(normalize_time_format)
             # 無効なスロットの行を除外
@@ -525,27 +639,18 @@ class UnifiedTSODownloader:
         try:
             def create_master_key(row):
                 try:
-                    # 日付からyyyymmdd形式を作成
+                    # 日付部分（yyyymmdd形式）
                     date_str = row['date']
                     if pd.isna(date_str) or date_str is None:
                         return None
                     
-                    try:
-                        date_obj = pd.to_datetime(date_str)
-                        date_part = date_obj.strftime('%Y%m%d')
-                    except:
-                        # 既に'YYYYMMDD'形式の場合
-                        date_part = date_str.replace('-', '')
-                    
-                    # スロットからHH:MM形式を取得し、:を削除
+                    # スロット部分（整数）
                     slot = row['slot']
                     if pd.isna(slot) or slot is None:
                         return None
                     
-                    slot_part = slot.replace(':', '')
-                    
-                    # マスターキーを結合
-                    return f"{date_part}_{slot_part}"
+                    # マスターキーを結合（yyyymmdd_slot形式）
+                    return f"{date_str}_{slot}"
                 except Exception as e:
                     logger.error(f"マスターキー生成エラー: {str(e)}, row={row}")
                     return None

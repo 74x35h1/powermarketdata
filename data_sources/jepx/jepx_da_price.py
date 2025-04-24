@@ -87,9 +87,34 @@ DEC_COLS = {
 }
 
 class JEPXDAPriceDownloader:
-    def __init__(self):
-        self.db = DuckDBConnection()
+    """
+    JEPXスポット価格データダウンローダー
+    
+    with文で使用することで、ブロックを抜けた時に自動的にデータベース接続を閉じます。
+    """
+    def __init__(self, db_path: str = None, read_only: bool = False):
+        """
+        初期化
+        
+        Args:
+            db_path: データベースファイルのパス（省略時はデフォルト）
+            read_only: 読み取り専用モードで接続する場合はTrue
+        """
+        self.db = DuckDBConnection(db_path, read_only=read_only)
         self._ensure_table()
+    
+    def __enter__(self):
+        """コンテキストマネージャのエントリポイント"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """コンテキストマネージャの終了処理"""
+        # 明示的にDB接続をクローズ
+        try:
+            if hasattr(self, 'db') and self.db is not None:
+                self.db.close()
+        except Exception as e:
+            print(f"[WARN] JEPXDAPriceDownloaderのコンテキスト終了時のDB接続クローズでエラー: {e}")
 
     def _ensure_table(self):
         schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "db", "schema_definition.sql")
@@ -256,5 +281,5 @@ class JEPXDAPriceDownloader:
         print('JEPX day-ahead price data updated.')
 
 if __name__ == "__main__":
-    downloader = JEPXDAPriceDownloader()
-    downloader.fetch_and_store()
+    with JEPXDAPriceDownloader() as downloader:
+        downloader.fetch_and_store()
