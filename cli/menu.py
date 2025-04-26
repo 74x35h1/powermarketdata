@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 try:
     from data_sources.tso.unified_downloader import UnifiedTSODownloader
     from data_sources.tso.db_importer import TSODataImporter
-    from data_sources.db_connection import DuckDBConnection
+    from db.duckdb_connection import DuckDBConnection
 except ImportError as e:
     logger.error(f"モジュールインポートエラー: {e}")
     logger.error("必要なモジュールがインポートできません。")

@@ -1,49 +1,42 @@
 #!/usr/bin/env python3
 """
-統合された日本の電力会社（TSO）データダウンローダー
+統合された日本の電力会社（TSO）データダウンローダー (リファクタリング版)
 
-このスクリプトは、各電力会社（TSO）のWebサイトからデータを取得し、
-標準化されたフォーマットでデータベースに保存するための機能を提供します。
+URL取得、ダウンロード、パース処理を外部モジュールに分離。
+このスクリプトは全体のオーケストレーションとDB保存を担当。
 """
 
 import os
 import sys
-import re
-import io
-import zipfile
 import logging
-import requests
 import pandas as pd
-from datetime import date, datetime, timedelta
-from typing import List, Dict, Tuple, Optional, Any, Union
+from datetime import date, datetime
+from typing import List, Tuple, Optional
 import random
 import time
-import urllib3
 import ssl
-import numpy as np
 
-# SSLの証明書検証警告を無効化（セキュリティ上の注意が必要）
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# 古いSSLプロトコルを使用するための設定
+# SSL設定 (古いSSLプロトコル対応、downloader.pyにも同様の記述があるが念のため)
 try:
-    # デフォルトのSSLコンテキストを変更（古いサーバーに対応）
     old_https_context = ssl._create_default_https_context
     ssl._create_default_https_context = ssl._create_unverified_context
 except AttributeError:
-    # 古いPythonバージョンではこの設定は無視される
     pass
 
-# プロジェクトのルートディレクトリをパスに追加
+# プロジェクトのルートディレクトリをパスに追加 (既存のまま)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# --- 依存モジュールのインポート ---
 from db.duckdb_connection import DuckDBConnection
-# from data_sources.tso.tso_urls import TSO_INFO, get_tso_url, TSO_IDS
+# 分割したモジュールをインポート
+from .tso_url_templates import get_tso_url, VALID_TSO_IDS # URL取得関数とTSO IDリスト
+from .downloader import TSODataDownloader # ダウンロードクラス
+from .parser import TSODataParser       # パーサークラス
 
-# ロギングを設定
+# ロギング設定 (既存のまま)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -52,814 +45,302 @@ logger = logging.getLogger(__name__)
 
 class UnifiedTSODownloader:
     """
-    統合された日本の電力会社（TSO）データダウンローダー
-    
-    このクラスは、異なる電力会社のデータをダウンロードし処理するための
-    共通のインターフェースとユーティリティを提供します。
-    特定の電力会社（TSO）に対応するには、インスタンス化時にtso_idを指定します。
+    統合された日本の電力会社（TSO）データダウンローダー (オーケストレーター)
+    ダウンロード、パース、DB保存の処理フローを管理する。
     """
-    
+
     def __init__(
-        self, 
+        self,
         tso_id: str = None,
         tso_ids: List[str] = None,
         db_connection: Optional[DuckDBConnection] = None,
         url_type: str = 'demand',
-        table_name: Optional[str] = None
+        table_name: Optional[str] = None # この引数はDB保存時に使われる
     ):
         """
-        TSOダウンローダーを初期化
-        
+        ダウンローダーを初期化
         Args:
-            tso_id: 単一のTSO ID（例: 'tepco', 'hokuriku'）
-            tso_ids: 複数のTSO IDのリスト（tso_idが指定されていない場合使用）
-            db_connection: データベース接続オブジェクト
-            url_type: ダウンロードするデータの種類（'demand'または'supply'）
-            table_name: データを保存するデータベーステーブル名
+            tso_id: 単一のTSO ID
+            tso_ids: 複数のTSO IDリスト
+            db_connection: DB接続オブジェクト (Parserと共有する場合あり)
+            url_type: データ種類 ('demand' or 'supply')
+            table_name: 保存先テーブル名 (オプション)
         """
+        # DB接続の初期化 (なければ作成)
         self.db_connection = db_connection or DuckDBConnection()
         self.url_type = url_type
-        
-        # 有効なTSO IDの一覧を定義（TSO_INFOに依存せず内部で管理）
-        self.VALID_TSO_IDS = [
-            "hokkaido", "tohoku", "tepco", "chubu", "hokuriku", 
-            "kansai", "chugoku", "shikoku", "kyushu", "okinawa"
-        ]
-        
-        # 単一のTSO IDと複数のTSO IDsの両方の指定をサポート
+        self.table_name_prefix = table_name # 特定のテーブル名を指定する場合
+
+        # 利用可能なTSO IDリストを外部モジュールから取得
+        self.VALID_TSO_IDS = VALID_TSO_IDS
+
+        # 処理対象のTSO IDを設定
         if tso_id:
             self.tso_ids = [tso_id]
-            self.tso_id = tso_id
-            self.table_name = table_name or f"{tso_id}_{url_type}"
         elif tso_ids:
             self.tso_ids = tso_ids
-            self.tso_id = None
-            self.table_name = table_name or f"tso_{url_type}"
         else:
+            # 指定がない場合はすべて
             self.tso_ids = self.VALID_TSO_IDS
-            self.tso_id = None
-            self.table_name = table_name or f"tso_{url_type}"
-        
+
         # TSO IDの検証
         invalid_ids = [tid for tid in self.tso_ids if tid not in self.VALID_TSO_IDS]
         if invalid_ids:
             raise ValueError(f"無効なTSO ID: {invalid_ids}。有効なID: {self.VALID_TSO_IDS}")
-            
-        logger.info(f"TSO [{', '.join(self.tso_ids)}] のダウンローダーを初期化しました")
-    
-    def get_url(self, tso_id: str = None, target_date: date = None) -> str:
-        """
-        指定されたTSO IDのデータをダウンロードするURLを取得
-        
-        Args:
-            tso_id: TSO ID。省略すると、インスタンス化時に指定したTSO IDを使用
-            target_date: 対象日付。URLのプレースホルダーを置換するために使用
-            
-        Returns:
-            URL文字列
-            
-        Raises:
-            ValueError: URLが取得できない場合やTSO IDが指定されていない場合
-        """
-        # TSO IDの取得と検証
-        tso_id = tso_id or self.tso_id
-        
-        if not tso_id:
-            logger.error("TSO IDが指定されていません")
-            raise ValueError("TSO IDが指定されていません")
-        
-        try:
-            # 日付が指定されていない場合、現在の日付を使用
-            if target_date is None:
-                target_date = datetime.now().date()
 
-            # URLに使用する年月を取得
-            year = target_date.year
-            month = target_date.month
-            year_month = f"{year}{month:02d}"
-            
-            # 各TSOごとのURL形式を定義（固定年を使わず、引数の日付を使用）
-            tso_url_templates = {
-                "hokkaido": {
-                    "demand": f"https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{year_month}_01.csv",
-                    "supply": f"https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_{year_month}_01.csv"
-                },
-                "tohoku": {
-                    "demand": f"https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{year_month}_02.csv",
-                    "supply": f"https://setsuden.nw.tohoku-epco.co.jp/common/demand/eria_jukyu_{year_month}_02.csv"
-                },
-                "tepco": {
-                    "demand": f"https://www.tepco.co.jp/forecast/html/area_data/{year}_area_data_{year_month}.csv",
-                    "supply": f"https://www.tepco.co.jp/forecast/html/area_data/{year}_area_data_{year_month}.csv"
-                },
-                "chubu": {
-                    "demand": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/{year}.zip",
-                    "supply": f"https://powergrid.chuden.co.jp/goannai/publication/supplydemand/archive/{year}.zip"
-                },
-                "hokuriku": {
-                    "demand": f"https://www.rikuden.co.jp/nw_jyukyuu/csv/area_{year_month}.csv",
-                    "supply": f"https://www.rikuden.co.jp/nw_jyukyuu/csv/area_{year_month}.csv"
-                },
-                "kansai": {
-                    "demand": f"https://www.kansai-td.co.jp/yamasou/juyo-jisseki/jisseki/ji_{year_month}.csv",
-                    "supply": f"https://www.kansai-td.co.jp/yamasou/juyo-jisseki/jisseki/ji_{year_month}.csv"
-                },
-                "chugoku": {
-                    "demand": f"https://www.energia.co.jp/nw/service/supply/juyo/sys/juyo-jisseki-{year_month}.csv",
-                    "supply": f"https://www.energia.co.jp/nw/service/supply/juyo/sys/juyo-jisseki-{year_month}.csv"
-                },
-                "shikoku": {
-                    "demand": f"https://www.yonden.co.jp/nw/assets/renewable_energy/data/download_juyo/{year_month}_jukyu.csv",
-                    "supply": f"https://www.yonden.co.jp/nw/assets/renewable_energy/data/download_juyo/{year_month}_jukyu.csv"
-                },
-                "kyushu": {
-                    "demand": f"https://www.kyuden.co.jp/td_service_wheeling_rule-document_disclosure-area-performance_{year_month}.csv",
-                    "supply": f"https://www.kyuden.co.jp/td_service_wheeling_rule-document_disclosure-area-performance_{year_month}.csv"
-                },
-                "okinawa": {
-                    "demand": f"https://www.okiden.co.jp/td-service/renewable-energy/supply_demand/csv/area_jokyo_{year_month}.csv",
-                    "supply": f"https://www.okiden.co.jp/td-service/renewable-energy/supply_demand/csv/area_jokyo_{year_month}.csv"
-                }
-            }
-            
-            # 該当するTSO IDのURLを取得
-            if tso_id not in tso_url_templates:
-                raise ValueError(f"無効なTSO ID: {tso_id}")
-            
-            if self.url_type not in tso_url_templates[tso_id]:
-                raise ValueError(f"TSO {tso_id} に対してURL種別 {self.url_type} はサポートされていません")
-            
-            url = tso_url_templates[tso_id][self.url_type]
-            logger.info(f"TSO {tso_id}, タイプ {self.url_type} のURL: {url}")
-            return url
-        except Exception as e:
-            logger.error(f"URL取得中にエラーが発生しました: {str(e)}")
-            raise ValueError(f"URLの取得に失敗しました: {str(e)}")
-    
-    def download_csv(self, target_date: date, tso_id: str = None, **kwargs) -> str:
-        """
-        指定された日付のCSVデータをダウンロード
-        
-        Args:
-            target_date: ダウンロード対象の日付
-            tso_id: TSO ID。省略すると、インスタンス化時に指定したTSO IDを使用
-            **kwargs: ダウンロードの追加パラメータ
-            
-        Returns:
-            CSV内容の文字列
-            
-        Raises:
-            ValueError: ダウンロードに失敗した場合
-        """
-        tso_id = tso_id or self.tso_id
-        
-        if not tso_id:
-            raise ValueError("単一のTSO IDが指定されていません")
-            
-        url = self.get_url(tso_id, target_date)
-        
-        # 日付パラメータをフォーマット（クエリパラメータとして使用する場合）
-        params = {
-            'year': target_date.year,
-            'month': target_date.month,
-            'day': target_date.day
-        }
-        
-        # kwargsからの追加パラメータを追加
-        params.update(kwargs.get('params', {}))
-        
-        try:
-            logger.info(f"{url} から {target_date} のデータをダウンロード中")
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            # 中部電力のURL特殊処理（最新のデータを探す）
-            if tso_id == 'chubu' and '.zip' in url:
-                # 現在の年から過去に遡って利用可能なデータを探す
-                current_year = datetime.now().year
-                test_years = [current_year, current_year - 1, current_year - 2]
-                
-                # もし指定された年が現在より新しい場合はスキップ
-                year_in_url = int(re.search(r'/(\d{4})\.zip', url).group(1))
-                if year_in_url > current_year:
-                    logger.warning(f"指定された年 {year_in_url} は未来のため、利用可能な過去のデータを探します")
-                    test_years = [current_year, current_year - 1, current_year - 2]
-                else:
-                    # 指定された年を最初に試す
-                    test_years = [year_in_url] + [y for y in test_years if y != year_in_url]
-                
-                original_url = url
-                for alt_year in test_years:
-                    # 元のURLの年部分を置換
-                    alt_url = re.sub(r'/(\d{4})\.zip', f'/{alt_year}.zip', original_url)
-                    logger.info(f"中部電力の代替URL: {alt_url} を試行")
-                    
-                    alt_response = requests.get(alt_url, headers=headers, verify=False)
-                    if alt_response.status_code == 200:
-                        url = alt_url
-                        # 年が変わったので日付も調整
-                        if alt_year != target_date.year:
-                            target_date = date(alt_year, target_date.month, target_date.day)
-                            logger.info(f"日付を調整: {target_date}")
-                        break
-                else:
-                    logger.warning(f"中部電力の利用可能なデータが見つかりません")
-            
-            # 関西電力のURL特殊処理（年月別データを探す）
-            if tso_id == 'kansai' and '_jisseki.zip' in url:
-                # 現在から過去に遡ってデータを探す
-                current_year = datetime.now().year
-                current_month = datetime.now().month
-                
-                # テスト対象の年月を生成
-                test_dates = []
-                # 最初に指定された日付を試す
-                test_dates.append((target_date.year, target_date.month))
-                
-                # 次に現在の月から1ヶ月前、2ヶ月前を試す
-                for i in range(1, 4):
-                    test_year = current_year
-                    test_month = current_month - i
-                    if test_month <= 0:
-                        test_month += 12
-                        test_year -= 1
-                    test_dates.append((test_year, test_month))
-                
-                # 重複を削除
-                test_dates = list(dict.fromkeys(test_dates))
-                
-                original_url = url
-                for test_year, test_month in test_dates:
-                    # URLの年月部分を置換
-                    alt_url = re.sub(r'(\d{4})(\d{2})_jisseki\.zip', f'{test_year}{test_month:02d}_jisseki.zip', original_url)
-                    if alt_url == original_url:  # パターンに一致しない場合
-                        alt_url = re.sub(r'ji_(\d{4})(\d{2})\.csv', f'ji_{test_year}{test_month:02d}.csv', original_url)
-                    
-                    logger.info(f"関西電力の代替URL: {alt_url} を試行")
-                    
-                    alt_response = requests.get(alt_url, headers=headers, verify=False)
-                    if alt_response.status_code == 200:
-                        url = alt_url
-                        # 日付を調整して正しい月のデータを処理
-                        target_date = date(test_year, test_month, 1)
-                        logger.info(f"日付を調整: {target_date}")
-                        break
-                else:
-                    logger.warning(f"関西電力の利用可能なデータが見つかりません")
-            
-            # 東北電力の特殊処理（異なるバージョン番号を試す）
-            if tso_id == 'tohoku' and 'eria_jukyu_' in url:
-                # 元のURL
-                original_url = url
-                # バージョン番号を変えて試行
-                version_numbers = ['01', '02', '03', '04', '05']
-                
-                for version in version_numbers:
-                    # URLのバージョン部分を置換 (_XX.csv)
-                    alt_url = re.sub(r'_\d{2}\.csv$', f'_{version}.csv', original_url)
-                    
-                    logger.info(f"東北電力の代替URL: {alt_url} を試行")
-                    
-                    try:
-                        alt_response = requests.get(alt_url, headers=headers, verify=False)
-                        if alt_response.status_code == 200 and alt_response.text.strip():
-                            url = alt_url
-                            logger.info(f"東北電力の有効なURL: {url}")
-                            break
-                    except requests.RequestException:
-                        continue
-                else:
-                    logger.warning(f"東北電力の利用可能なデータが見つかりません")
-            
-            # ZIPファイルの場合、クエリパラメータは不要（URL自体に年が含まれるため）
-            if '.zip' in url.lower():
-                response = requests.get(url, headers=headers, verify=False)
-            else:
-                response = requests.get(url, params=params, headers=headers, verify=False)
-                
-            response.raise_for_status()
-            
-            # URLが.zipで終わる場合、ZIPファイルとして処理
-            if url.lower().endswith('.zip'):
-                return self._process_zip_file(response.content, target_date, tso_id)
-            
-            # レスポンスが空またはCSVとして有効でないか確認
-            if not response.text.strip():
-                raise ValueError(f"日付 {target_date} に対して空のレスポンスを受け取りました")
-                
-            return response.text
-            
-        except requests.RequestException as e:
-            logger.error(f"{url} からのダウンロードエラー: {str(e)}")
-            raise ValueError(f"データのダウンロードに失敗しました: {str(e)}")
-    
-    def _process_zip_file(self, zip_content: bytes, target_date: date, tso_id: str) -> str:
-        """
-        ダウンロードしたZIPファイルを処理し、CSVコンテンツを抽出
-        
-        Args:
-            zip_content: ZIPファイルのバイナリコンテンツ
-            target_date: 対象日付
-            tso_id: TSO ID
-            
-        Returns:
-            抽出されたCSVコンテンツ
-            
-        Raises:
-            ValueError: ZIPファイルの処理に失敗した場合
-        """
-        try:
-            # メモリ上でZIPファイルを開く
-            with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_file:
-                # ZIPファイル内のファイル一覧を表示
-                file_list = zip_file.namelist()
-                logger.debug(f"ZIPファイル内のファイル: {file_list}")
-                
-                # CSVファイルを探す
-                csv_files = [f for f in file_list if f.lower().endswith('.csv')]
-                
-                if not csv_files:
-                    raise ValueError(f"ZIPファイル内にCSVファイルがありません: {file_list}")
-                
-                # 特別なケース：中部電力の月別ファイル検索
-                if tso_id == 'chubu':
-                    # 月別のパターン（例: eria_jukyu_202404.csv）を探す
-                    year_month = f"{target_date.year}{target_date.month:02d}"
-                    # 複数のパターンを試す（ファイル名の多様性に対応）
-                    patterns = [
-                        rf".*{year_month}.*\.csv",  # 完全な年月パターン
-                        rf".*_{target_date.year}.*_{target_date.month:02d}.*\.csv",  # 年と月が分離
-                        rf".*_{target_date.month:02d}月.*\.csv"  # 月のみ（日本語）
-                    ]
-                    
-                    # すべてのパターンを試す
-                    matched_files = []
-                    for pattern in patterns:
-                        pattern_re = re.compile(pattern, re.IGNORECASE)
-                        matched = [f for f in csv_files if pattern_re.match(f)]
-                        if matched:
-                            matched_files.extend(matched)
-                    
-                    if matched_files:
-                        logger.info(f"中部電力ZIPから一致したファイル: {matched_files}")
-                        target_file = matched_files[0]
-                    else:
-                        # 月別ファイルが見つからない場合、すべてのファイルリストを表示
-                        logger.warning(f"中部電力ZIPから一致するファイルがありません。利用可能なファイル: {csv_files}")
-                        # 最初のCSVファイルを使用
-                        target_file = csv_files[0]
-                else:
-                    # 通常のTSOのケース
-                    year_month = f"{target_date.year}{target_date.month:02d}"
-                    date_pattern = re.compile(rf".*{year_month}.*\.csv", re.IGNORECASE)
-                    matched_files = [f for f in csv_files if date_pattern.match(f)]
-                    
-                    # 日付パターンに一致するファイルがある場合はそれを使用、なければ最初のCSVファイル
-                    target_file = matched_files[0] if matched_files else csv_files[0]
-                
-                # 選択されたファイルをログに記録
-                logger.info(f"ZIPから使用するファイル: {target_file}")
-                
-                # ファイルの内容を読み込み
-                with zip_file.open(target_file) as file:
-                    content = file.read()
-                    # エンコーディングを自動検出して処理
-                    try:
-                        return content.decode('shift-jis', errors='replace')
-                    except UnicodeDecodeError:
-                        # 他のエンコーディングも試す
-                        encodings = ['utf-8', 'cp932', 'euc-jp']
-                        for encoding in encodings:
-                            try:
-                                return content.decode(encoding, errors='replace')
-                            except UnicodeDecodeError:
-                                continue
-                        # すべて失敗した場合は強制的に変換
-                        return content.decode('shift-jis', errors='ignore')
-                    
-        except (zipfile.BadZipFile, IndexError, UnicodeDecodeError) as e:
-            logger.error(f"ZIPファイルの処理中にエラーが発生しました: {str(e)}")
-            raise ValueError(f"ZIPファイルの処理に失敗しました: {str(e)}")
-    
-    def process_csv(self, csv_content: str, target_date: date, tso_id: str = None, **kwargs) -> pd.DataFrame:
-        """
-        ダウンロードしたCSV内容をDataFrameに処理
-        
-        Args:
-            csv_content: CSV内容の文字列
-            target_date: データをダウンロードした日付
-            tso_id: TSO ID。省略すると、インスタンス化時に指定したTSO IDを使用
-            **kwargs: 処理のための追加パラメータ
-            
-        Returns:
-            処理済みのDataFrame
-        """
-        tso_id = tso_id or self.tso_id
-        
-        if not tso_id:
-            raise ValueError("単一のTSO IDが指定されていません")
-        
-        try:
-            # ヘッダー行をスキップしてCSVを読み込み、カラム名は使用せずインデックスでアクセスする
-            try:
-                df = pd.read_csv(
-                    io.StringIO(csv_content),
-                    encoding='shift-jis',
-                    skiprows=kwargs.get('skiprows', 1),  # ヘッダー行をスキップ
-                    header=None  # カラム名は使用せず
-                )
-            except UnicodeDecodeError:
-                # Shift-JISで失敗した場合は他のエンコーディングを試す
-                encodings = ['utf-8', 'cp932', 'euc-jp']
-                df = None
-                for encoding in encodings:
-                    try:
-                        df = pd.read_csv(
-                            io.StringIO(csv_content),
-                            encoding=encoding,
-                            skiprows=kwargs.get('skiprows', 1),
-                            header=None
-                        )
-                        break
-                    except (UnicodeDecodeError, pd.errors.ParserError):
-                        continue
-                        
-                if df is None:
-                    raise ValueError("どのエンコーディングでもCSVデータを解析できませんでした")
-            
-            # url_typeに基づいて処理
-            if self.url_type == 'demand':
-                return self._process_demand_data(df, target_date, tso_id)
-            elif self.url_type == 'supply':
-                return self._process_supply_data(df, target_date, tso_id)
-            else:
-                raise ValueError(f"サポートされていないURLタイプ: {self.url_type}")
-                
-        except Exception as e:
-            logger.error(f"CSVデータの処理エラー: {str(e)}")
-            raise
-    
-    # 固定カラム順序の定義（TSOエリアデータの標準順序）
-    # CSVファイルの順序: DATE,TIME,エリア需要,原子力,火力(LNG),火力(石炭),火力(石油),火力(その他),水力,地熱,
-    # バイオマス,太陽光発電実績,太陽光出力制御量,風力発電実績,風力出力制御量,揚水,蓄電池,連系線,その他,合計
-    DEMAND_COLUMNS_ORDER = [
-        "master_key",   # 追加: yyyymmdd_slot形式
-        "date",         # 0: DATE
-        "slot",         # 1: TIME
-        "area_demand",  # 2: エリア需要
-        "nuclear",      # 3: 原子力
-        "LNG",          # 4: 火力(LNG)
-        "coal",         # 5: 火力(石炭)
-        "oil",          # 6: 火力(石油)
-        "other_fire",   # 7: 火力(その他)
-        "hydro",        # 8: 水力
-        "geothermal",   # 9: 地熱
-        "biomass",      # 10: バイオマス
-        "solar_actual", # 11: 太陽光発電実績
-        "solar_control",# 12: 太陽光出力制御量
-        "wind_actual",  # 13: 風力発電実績
-        "wind_control", # 14: 風力出力制御量
-        "pumped_storage",# 15: 揚水
-        "battery",      # 16: 蓄電池
-        "interconnection",# 17: 連系線
-        "other",        # 18: その他
-        "total"         # 19: 合計
-    ]
+        # ダウンローダーとパーサーのインスタンスを作成
+        # ParserにはDB接続を渡す (中部電力の重複チェック用)
+        self.downloader = TSODataDownloader()
+        self.parser = TSODataParser(db_connection=self.db_connection)
 
-    def _process_demand_data(self, df: pd.DataFrame, target_date: date, tso_id: str) -> pd.DataFrame:
-        """
-        需要データを標準形式に処理（固定カラム構造を前提）
-        """
-        logger.info(f"元のデータフレーム形状: {df.shape}")
-        logger.info(f"TSO: {tso_id}、対象日付: {target_date}")
-        
-        # 必要な列数があるか確認
-        expected_columns = len(self.DEMAND_COLUMNS_ORDER) - 1  # master_keyは後で追加するため-1
-        if df.shape[1] < expected_columns:
-            logger.error(f"カラム数が不足しています。期待:{expected_columns}, 実際:{df.shape[1]}")
-            # 足りない分は空のDataFrameを返す
-            return pd.DataFrame(columns=self.DEMAND_COLUMNS_ORDER)
-        
-        # 必要な列だけを抽出し、名前を変更
-        df_result = df.iloc[:, :expected_columns].copy()  # 必要な列だけ抽出
-        temp_columns = self.DEMAND_COLUMNS_ORDER[1:]  # master_keyを除いたカラム名
-        df_result.columns = temp_columns  # 英語カラム名を割り当て
-        
-        # ヘッダー行を検出して除外
-        # 最初の行がヘッダー行かどうかを確認するために、日付列の値を確認
-        if len(df_result) > 0 and isinstance(df_result['date'].iloc[0], str):
-            first_row_date = df_result['date'].iloc[0].strip().lower()
-            if first_row_date == 'date' or first_row_date in ['日付', 'date', 'date', '日付']:
-                logger.info("ヘッダー行を検出しました。この行を除外します。")
-                df_result = df_result.iloc[1:].copy()  # ヘッダー行を除外
-        
-        # 日付列を適切に変換 - yyyymmdd形式に変換
-        try:
-            # 文字列として取得し、日付部分のみを抽出
-            df_result['date'] = pd.to_datetime(df_result['date'], errors='coerce')
-            # 無効な日付の行を除外
-            df_result = df_result.dropna(subset=['date'])
-            # 日付をyyyymmdd形式の文字列に変換
-            df_result['date'] = df_result['date'].dt.strftime('%Y%m%d')
-            logger.info(f"日付変換後のサンプル: {df_result['date'].head(3).tolist()}")
-        except Exception as e:
-            logger.error(f"日付変換エラー: {str(e)}")
-            logger.debug(f"変換前の値（最初の5つ）: {df_result['date'].head(5).tolist()}")
-            
-            # エラー発生時のフォールバック処理を追加
-            try:
-                # フォールバック: 手動で日付形式を変換
-                def convert_date_manually(date_str):
-                    if pd.isna(date_str) or not isinstance(date_str, str):
-                        return None
-                        
-                    # YYYYMMDDなどの数値のみの場合
-                    if isinstance(date_str, str) and date_str.isdigit() and len(date_str) == 8:
-                        return date_str
-                        
-                    # すでにYYYY-MM-DD形式の場合はyyyymmdd形式に変換
-                    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
-                        return date_str.replace('-', '')
-                        
-                    # スラッシュを含む日付形式 (YYYY/MM/DD) を変換
-                    if '/' in date_str:
-                        parts = date_str.split('/')
-                        if len(parts) == 3:
-                            # 日本の標準形式はYYYY/MM/DD
-                            if len(parts[0]) == 4:  # YYYY/MM/DD
-                                return f"{parts[0]}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-                            elif len(parts[2]) == 4:  # MM/DD/YYYY
-                                return f"{parts[2]}{parts[0].zfill(2)}{parts[1].zfill(2)}"
-                    
-                    # それ以外の場合はNoneを返す
-                    return None
-                    
-                # 手動変換を適用
-                df_result['date'] = df_result['date'].apply(convert_date_manually)
-                # 無効な日付の行を除外
-                df_result = df_result.dropna(subset=['date'])
-                logger.info(f"手動日付変換後のサンプル: {df_result['date'].head(3).tolist()}")
-            except Exception as fallback_err:
-                logger.error(f"日付のフォールバック変換にも失敗: {str(fallback_err)}")
-        
-        # 時間スロットの形式を統一
-        try:
-            # 時間帯形式の正規化のための正規表現
-            time_pattern = r'(\d{1,2})[:\s時](\d{1,2})'
-            
-            def normalize_time_format(time_str):
-                if pd.isna(time_str):
-                    return None
-                if time_str == 'TIME' or time_str.lower() == 'time':
-                    return None
-                
-                time_str = str(time_str).strip()
-                match = re.search(time_pattern, time_str)
-                if match:
-                    hour, minute = match.groups()
-                    # スロット番号に変換 (00:00→1, 00:30→2, ...)
-                    return int(hour) * 2 + (1 if int(minute) == 30 else 0) + 1
-                # 既に数値形式の場合
-                try:
-                    return int(time_str)
-                except:
-                    return time_str
-            
-            df_result['slot'] = df_result['slot'].apply(normalize_time_format)
-            # 無効なスロットの行を除外
-            df_result = df_result.dropna(subset=['slot'])
-            logger.info(f"スロット変換後のサンプル: {df_result['slot'].head(3).tolist()}")
-        except Exception as e:
-            logger.error(f"時間スロット変換エラー: {str(e)}")
-            logger.debug(f"変換前の値（最初の5つ）: {df_result['slot'].head(5).tolist()}")
-        
-        # マスターキーの生成（yyyymmdd_slot形式）
-        try:
-            def create_master_key(row):
-                try:
-                    # 日付部分（yyyymmdd形式）
-                    date_str = row['date']
-                    if pd.isna(date_str) or date_str is None:
-                        return None
-                    
-                    # スロット部分（整数）
-                    slot = row['slot']
-                    if pd.isna(slot) or slot is None:
-                        return None
-                    
-                    # マスターキーを結合（yyyymmdd_slot形式）
-                    return f"{date_str}_{slot}"
-                except Exception as e:
-                    logger.error(f"マスターキー生成エラー: {str(e)}, row={row}")
-                    return None
-            
-            df_result['master_key'] = df_result.apply(create_master_key, axis=1)
-            # 無効なマスターキーの行を除外
-            df_result = df_result.dropna(subset=['master_key'])
-            
-            # マスターキーカラムを先頭に移動
-            cols = df_result.columns.tolist()
-            cols.remove('master_key')
-            cols = ['master_key'] + cols
-            df_result = df_result[cols]
-            
-            # 重複マスターキーを削除
-            before = len(df_result)
-            df_result = df_result.drop_duplicates(subset=['master_key'], keep='first')
-            after = len(df_result)
-            if before != after:
-                logger.warning(f"重複マスターキーのため {before - after} 行を削除しました")
-            
-            logger.info(f"マスターキー生成サンプル: {df_result['master_key'].head(3).tolist()}")
-        except Exception as e:
-            logger.error(f"マスターキー列の生成エラー: {str(e)}")
-        
-        # 数値型カラムを数値に変換
-        numeric_columns = [col for col in df_result.columns if col not in ['date', 'slot', 'master_key', 'tso_id']]
-        for col in numeric_columns:
-            try:
-                df_result[col] = pd.to_numeric(df_result[col], errors='coerce')
-            except Exception as e:
-                logger.error(f"{col}列の数値変換エラー: {str(e)}")
-        
-        # tso_id追加
-        df_result['tso_id'] = tso_id
-        
-        # データが正しく読み込めたことの確認ログ
-        logger.info(f"処理後のデータ形状: {df_result.shape}")
-        if not df_result.empty:
-            logger.info(f"データサンプル: {df_result.head(1).to_dict('records')}")
-            # 重複チェック
-            if df_result.duplicated(subset=['master_key']).any():
-                dup_count = df_result.duplicated(subset=['master_key']).sum()
-                logger.warning(f"マスターキーの重複があります: {dup_count}件")
-                # 重複している最初の数件を表示
-                dup_keys = df_result[df_result.duplicated(subset=['master_key'], keep=False)]['master_key'].head(5).tolist()
-                logger.warning(f"重複マスターキーの例: {dup_keys}")
-                # 重複を削除
-                df_result = df_result.drop_duplicates(subset=['master_key'], keep='first')
-                logger.info(f"重複削除後の形状: {df_result.shape}")
-        else:
-            logger.info("データが空です")
-        
-        return df_result
+        logger.info(f"UnifiedTSODownloader初期化完了: TSOs=[{', '.join(self.tso_ids)}], URL Type={url_type}")
 
-    def _process_supply_data(self, df: pd.DataFrame, target_date: date, tso_id: str) -> pd.DataFrame:
-        """
-        供給データを標準形式に処理（需要データと同じカラム構造を前提）
-        """
-        # 需要データと同じ処理を適用
-        return self._process_demand_data(df, target_date, tso_id)
-    
     def download_files(
         self,
         start_date: date,
         end_date: date,
         sleep_min: int = 1,
         sleep_max: int = 5,
-        **kwargs
+        save_to_db: bool = True # DB保存を制御するフラグを追加
     ) -> List[Tuple[date, str, pd.DataFrame]]:
         """
-        日付範囲に対応するファイルをダウンロード（月単位で1回だけダウンロードし、1回の結果として返す）
-        
+        指定期間のすべてのデータファイルをダウンロード、パースし、(オプションで)DBに保存する。
+
         Args:
-            start_date: ダウンロード開始日
-            end_date: ダウンロード終了日（含む）
-            sleep_min: ダウンロード間の最小スリープ時間（秒）
-            sleep_max: ダウンロード間の最大スリープ時間（秒）
-            **kwargs: ダウンロードと処理のための追加パラメータ
-        
+            start_date: 開始日
+            end_date: 終了日
+            sleep_min: リクエスト間の最小待機時間（秒）
+            sleep_max: リクエスト間の最大待機時間（秒）
+            save_to_db: Trueの場合、取得したデータをDBに保存する
+
         Returns:
-            (対象月の代表日付, tso_id, dataframe) のタプルのリスト
+            List[Tuple[date, str, DataFrame]]: 日付、TSO ID、処理済みデータフレームのタプルのリスト
+                                              DB保存が有効な場合、保存後のDataFrameが返る。
+                                              保存が無効な場合、パース後のDataFrameが返る。
         """
-        results = []
-        try:
-            for tso_id in self.tso_ids:
-                # 月ごとに1回だけダウンロード（月をまたぐ場合のみ複数回）
-                current_month = (start_date.year, start_date.month)
-                end_month = (end_date.year, end_date.month)
-                
-                # 処理対象の月リストを生成
-                months_to_process = []
-                y, m = current_month
-                while (y, m) <= end_month:
-                    months_to_process.append((y, m))
-                    m += 1
-                    if m > 12:
-                        y += 1
-                        m = 1
-                
-                logger.info(f"処理対象月: {months_to_process}")
-                
-                for year, month in months_to_process:
-                    try:
-                        # 月の初日を基準日として使用
-                        target_date = date(year, month, 1)
-                        logger.info(f"{target_date.strftime('%Y-%m')} の {tso_id} {self.url_type} データをダウンロード中")
-                        
-                        # 月全体のデータをダウンロード
-                        csv_content = self.download_csv(target_date, tso_id, **kwargs)
-                        df = self.process_csv(csv_content, target_date, tso_id, **kwargs)
-                        
-                        # 処理に失敗した場合はスキップ
-                        if df.empty:
-                            logger.warning(f"{year}年{month}月の{tso_id}データが空です")
-                            continue
-                        
-                        # 指定範囲の日付のみに絞り込む（元々の方法と同じ）
-                        df['date'] = pd.to_datetime(df['date'])
-                        mask = (df['date'] >= pd.Timestamp(start_date)) & (df['date'] <= pd.Timestamp(end_date))
-                        filtered_df = df[mask].copy()
-                        
-                        if filtered_df.empty:
-                            logger.warning(f"指定範囲 {start_date} ~ {end_date} のデータがありません")
-                            continue
-                        
-                        # 日付を文字列に戻す
-                        filtered_df['date'] = filtered_df['date'].dt.strftime('%Y-%m-%d')
-                        
-                        # 月全体のデータを一括で返す
-                        results.append((target_date, tso_id, filtered_df))
-                        
-                        # データ量のログ出力
-                        logger.info(f"{year}年{month}月の{tso_id}データ: {len(filtered_df)}行")
-                        
-                        # サーバー負荷軽減
-                        time.sleep(random.uniform(sleep_min, sleep_max))
-                        
-                    except Exception as e:
-                        logger.error(f"{year}年{month}月の{tso_id} {self.url_type}データのダウンロードエラー: {str(e)}")
-        finally:
-            # データベース接続がある場合は必ず閉じる
-            if hasattr(self, 'db_connection') and self.db_connection is not None:
+        processed_results = [] # パース/保存後の結果を格納
+
+        if not self.tso_ids:
+            logger.error("処理対象のTSO IDが指定されていません")
+            return processed_results
+
+        # 処理対象の月のリストを生成 (旧処理を踏襲)
+        target_months = []
+        current_date = start_date.replace(day=1)
+        while current_date <= end_date:
+            target_months.append(current_date)
+            next_month_start = (
+                date(current_date.year + 1, 1, 1)
+                if current_date.month == 12
+                else date(current_date.year, current_date.month + 1, 1)
+            )
+            current_date = next_month_start
+
+        logger.info(f"処理対象期間: {start_date} - {end_date}")
+        logger.info(f"処理対象月 (開始日基準): {[d.strftime('%Y-%m') for d in target_months]}")
+
+        # 各TSO IDと月の組み合わせを処理
+        for tso_id in self.tso_ids:
+            # --- 中部電力の年間ZIP特別処理 ---
+            # 月次ループの前に年間ZIPを試みる
+            if tso_id == 'chubu':
+                logger.info(f"中部電力 年間ZIP処理試行 (期間: {start_date} - {end_date})")
                 try:
-                    self.db_connection.close()
-                    print(f"[INFO] ダウンロード後のデータベース接続を閉じました")
+                    # 代表として期間内の適当な日付でURLを取得 (年は重要)
+                    representative_date_for_year = start_date
+                    base_zip_url = get_tso_url(tso_id, self.url_type, representative_date_for_year)
+
+                    # fetch_data が年の探索を行う
+                    # 中部電力の場合、fetch_dataはバイナリ(bytes)を返す想定
+                    zip_content = self.downloader.fetch_data(tso_id, base_zip_url, representative_date_for_year)
+
+                    if zip_content and isinstance(zip_content, bytes):
+                        logger.info(f"中部電力 ZIPダウンロード成功 (サイズ: {len(zip_content)} bytes)")
+                        # パーサーにZIPコンテンツを渡す
+                        # _process_zip_file は重複チェック済みのDFを返す
+                        # target_date はZIPファイル全体に関連するため、ここでは start_date を代表として渡す
+                        combined_df = self.parser.parse_data(zip_content, tso_id, start_date, url=base_zip_url)
+
+                        if not combined_df.empty:
+                            logger.info(f"中部電力 ZIPパース成功: {len(combined_df)}行")
+                            # ★ フィルタリングせず、combined_df (ZIP全体のパース結果) を使う
+                            df_to_save = combined_df 
+
+                            # DB保存処理 (オプション)
+                            if save_to_db:
+                                try:
+                                    # ★ df_to_save を渡す
+                                    self._save_to_database(df_to_save, start_date, tso_id)
+                                    logger.info(f"中部電力 ZIPデータ ({len(df_to_save)}行) をDBに保存しました。")
+                                    # processed_results には、代表日と全データフレームを追加
+                                    processed_results.append((start_date, tso_id, df_to_save)) 
+                                except Exception as db_err:
+                                    logger.error(f"中部電力 ZIPデータのDB保存エラー: {db_err}")
+                                    # DB保存失敗してもパース結果は返す
+                                    processed_results.append((start_date, tso_id, df_to_save))
+                            else:
+                                 # DB保存しない場合はパース結果を結果に追加
+                                 processed_results.append((start_date, tso_id, df_to_save))
+                            # 中部電力はZIP処理が成功したら月次ループはスキップ
+                            continue # 次のTSOへ
+                        else:
+                            logger.warning(f"中部電力 ZIPパース後、データが空でした。")
+                    else:
+                         logger.warning(f"中部電力 ZIPダウンロード失敗または空コンテンツ")
                 except Exception as e:
-                    print(f"[ERROR] データベース接続を閉じる際にエラーが発生: {str(e)}")
-        
-        return results
-    
-    def _save_to_database(self, df: pd.DataFrame, target_date: date, tso_id: str = None) -> None:
+                    logger.error(f"中部電力 年間ZIP処理中にエラーが発生しました: {e}。月次処理を試みます。")
+                    # エラーが発生しても、後続の月次処理は試行する
+
+            # --- 月次データ処理ループ ---
+            for target_date in target_months:
+                try:
+                    logger.info(f"処理中: TSO={tso_id}, Month={target_date.strftime('%Y-%m')}, Type={self.url_type}")
+
+                    # 待機処理 (初回以外)
+                    if processed_results:
+                        sleep_time = random.uniform(sleep_min, sleep_max)
+                        logger.info(f"待機中: {sleep_time:.1f}秒...")
+                        time.sleep(sleep_time)
+
+                    # 1. URL取得
+                    try:
+                        base_url = get_tso_url(tso_id, self.url_type, target_date)
+                    except ValueError as url_err:
+                         logger.error(f"URL取得失敗: {url_err}")
+                         continue # 次の月へ
+
+                    # 2. データダウンロード
+                    downloaded_content = None # 初期化
+                    try:
+                         # fetch_data は URL の特殊処理 (東北など) も行う
+                         downloaded_content = self.downloader.fetch_data(tso_id, base_url, target_date)
+                    except ValueError as dl_err:
+                         logger.warning(f"ダウンロード失敗: {dl_err}")
+                         continue # 次の月へ
+                    except Exception as dl_fatal_err:
+                         logger.error(f"予期せぬダウンロードエラー: {dl_fatal_err}", exc_info=True)
+                         continue # 次の月へ
+
+                    if not downloaded_content:
+                        logger.warning(f"ダウンロードコンテンツが空: TSO={tso_id}, Month={target_date.strftime('%Y-%m')}")
+                        continue # 次の月へ
+
+                    # 3. データパース
+                    parsed_df = pd.DataFrame() # 初期化
+                    try:
+                         # target_date は月を表すが、パース関数にはそのまま渡す
+                         parsed_df = self.parser.parse_data(downloaded_content, tso_id, target_date, url=base_url)
+                    except Exception as parse_err:
+                         logger.error(f"パースエラー: {parse_err}", exc_info=True)
+                         continue # 次の月へ
+
+                    if parsed_df.empty:
+                        logger.warning(f"パース結果が空: TSO={tso_id}, Month={target_date.strftime('%Y-%m')}")
+                        continue # 次の月へ
+
+                    logger.info(f"パース成功: {len(parsed_df)}行取得 (TSO={tso_id}, Month={target_date.strftime('%Y-%m')})")
+
+                    # 4. DB保存 (オプション)
+                    if save_to_db:
+                        try:
+                            # _save_to_databaseは月ごとのデータを保存
+                            self._save_to_database(parsed_df, target_date, tso_id)
+                            logger.info(f"DB保存完了: Table='{table_name}', Attempted={len(parsed_df)} rows")
+                            processed_results.append((target_date, tso_id, parsed_df))
+                        except Exception as db_err:
+                             logger.error(f"DB保存エラー: {db_err}", exc_info=True)
+                             # DB保存失敗してもパース結果は返す
+                             processed_results.append((target_date, tso_id, parsed_df))
+                    else:
+                         # DB保存しない場合はパース結果をそのまま追加
+                         processed_results.append((target_date, tso_id, parsed_df))
+
+                except Exception as month_err:
+                    # 月ごとのループで予期せぬエラーが発生した場合
+                    logger.error(f"月次処理ループ(TSO={tso_id}, Month={target_date.strftime('%Y-%m')})でエラー: {month_err}", exc_info=True)
+                    # 次の月/TSOの処理は続ける
+                    continue
+
+        logger.info(f"全処理完了。合計 {len(processed_results)} 件の結果を取得しました。")
+        return processed_results
+
+    def _save_to_database(self, df: pd.DataFrame, target_date: date, tso_id: str) -> None:
         """
-        処理済みのDataFrameをデータベースに保存
-        
+        処理済みのDataFrameをデータベースに保存。
+        unified_downloader.py からロジックを維持。
+        テーブル名を動的に決定する。
         Args:
             df: 保存するDataFrame
-            target_date: データをダウンロードした日付
-            tso_id: TSO ID。省略すると、インスタンス化時に指定したTSO IDを使用
-            
+            target_date: データの対象日 (主にログとメタデータ用)
+            tso_id: TSO ID
         Raises:
-            ValueError: データベース接続が利用できない場合
+            ValueError: DB接続がない場合
+            Exception: DB保存時のエラー
         """
         if not self.db_connection:
+            logger.error("データベース接続が利用できません。保存をスキップします。")
             raise ValueError("データベース接続が利用できません")
-        
-        tso_id = tso_id or self.tso_id
-            
-        try:
-            table_name = self.table_name
-            if not tso_id and '_{tso_id}_' not in table_name:
-                # 複数のTSOをダウンロードする場合は、table_nameにtso_idが含まれていることを確認
-                table_name = f"tso_{self.url_type}"
-                
-            logger.info(f"{target_date} に対して {table_name} に {len(df)} 行を保存しています")
-            
-            # 存在しない場合はメタデータ列を追加
-            if 'year' not in df.columns:
-                df['year'] = target_date.year
-            if 'month' not in df.columns:
-                df['month'] = target_date.month
-            if 'day' not in df.columns:
-                df['day'] = target_date.day
-            if 'tso' not in df.columns and 'tso_id' not in df.columns:
-                df['tso'] = tso_id
-                
-            # DataFrameを保存
-            self.db_connection.save_dataframe(df, table_name)
-            logger.info(f"{table_name} にデータを正常に保存しました")
-            
-        except Exception as e:
-            logger.error(f"データベースへのデータ保存エラー: {str(e)}")
-            raise
 
+        if df.empty:
+            logger.warning(f"保存対象のDataFrameが空です。TSO={tso_id}, Date={target_date}")
+            return
+
+        try:
+            # TSO IDからエリアコードを取得（テーブル名生成用）
+            area_code_map = {
+                "hokkaido": "1", "tohoku": "2", "tepco": "3", "chubu": "4",
+                "hokuriku": "5", "kansai": "6", "chugoku": "7", "shikoku": "8", "kyushu": "9",
+                "okinawa": "10" # 沖縄のエリアコードを仮に10とする
+            }
+            area_code = area_code_map.get(tso_id)
+
+            # テーブル名を決定
+            if self.table_name_prefix:
+                 # ユーザー指定のプレフィックスがある場合
+                 table_name = f"{self.table_name_prefix}_{tso_id}" if area_code else self.table_name_prefix
+            elif area_code:
+                 # 標準的なテーブル名 (tso_area_X_data)
+                 table_name = f"tso_area_{area_code}_data"
+            else:
+                 # フォールバック (tso_id_urltype)
+                 table_name = f"{tso_id}_{self.url_type}"
+
+            logger.info(f"DB保存開始: Table='{table_name}', Rows={len(df)}, TSO={tso_id}, Date={target_date}")
+
+            # DataFrameをDBに保存 (DuckDBConnectionのメソッドを使用)
+            self.db_connection.save_dataframe(df, table_name, if_exists='append')
+            logger.info(f"DB保存完了: Table='{table_name}', Attempted={len(df)} rows") # 試行行数をログに出力
+
+        except Exception as e:
+            logger.error(f"データベース保存エラー: Table={table_name}, TSO={tso_id}, Error={e}", exc_info=True)
+            raise # エラーを再発生させて呼び出し元に通知
+
+    # _save_to_database_with_duplicate_check は save_dataframe 内で吸収されたか、
+    # または Parser 側の _process_zip_file で重複チェックが既に行われているため削除。
+    # 必要であれば save_dataframe に重複チェック機能を追加する。
+
+# --- CLI実行部分 --- (既存のまま)
 if __name__ == "__main__":
-    # ファイルが直接実行された場合、対話式CLIを起動
     import sys
     import os
-    
+
     # プロジェクトのルートをインポートパスに追加
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    
+    # このファイルの場所基準でなく、起動スクリプトの場所基準が望ましい場合がある
+    # ここでは既存のロジックを維持
+    cli_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if cli_project_root not in sys.path:
+        sys.path.insert(0, cli_project_root)
+
     # 対話式CLIスクリプトを実行
     try:
-        from examples.interactive_tso_downloader import main
-        sys.exit(main())
+        # examplesディレクトリからの相対インポートを試みる
+        from examples.interactive_tso_downloader import main as cli_main
+        # UnifiedTSODownloader を使うように変更されているか確認が必要
+        sys.exit(cli_main())
     except ImportError as e:
-        print(f"エラー: 対話式CLIスクリプトを読み込めませんでした - {e}")
-        print("コマンドを実行して対話式CLIを起動してください: ./run_tso_cli.sh")
-        sys.exit(1) 
+        print(f"エラー: 対話式CLIスクリプト (examples.interactive_tso_downloader) を読み込めませんでした - {e}")
+        print("実行パスを確認するか、 `python examples/interactive_tso_downloader.py` を直接実行してください。")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"CLI実行中に予期せぬエラー: {e}", exc_info=True)
+        sys.exit(1)

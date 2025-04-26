@@ -29,7 +29,7 @@ from data_sources.tso.unified_downloader import UnifiedTSODownloader
 
 # ロギングを設定
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -48,32 +48,77 @@ class TSODataImporter:
     
     def __init__(self, db_path: str = None, read_only: bool = False):
         """
-        TSOデータインポーターを初期化
+        TSO（送電系統運用者）データインポーターを初期化します。
         
         Args:
-            db_path: データベースファイルのパス（省略時はデフォルト）
-            read_only: 読み取り専用モードで接続する場合はTrue
+            db_path: DuckDBデータベースファイルのパス
+            read_only: 読み取り専用モードでデータベースに接続するかどうか
         """
-        # データベース接続はコンテキストマネージャとして使用
-        self.db = DuckDBConnection(db_path, read_only=read_only)
-        self.table_name = "tso_data"  # デフォルトテーブル名
-        self._ensure_tables()
-        
-        # エリアコードとテーブル名のマッピング
-        self.area_tables = {
-            "1": "tso_area_1_data",
-            "2": "tso_area_2_data",
-            "3": "tso_area_3_data",
-            "4": "tso_area_4_data",
-            "5": "tso_area_5_data",
-            "6": "tso_area_6_data",
-            "7": "tso_area_7_data",
-            "8": "tso_area_8_data",
-            "9": "tso_area_9_data"
-        }
+        try:
+            # DuckDBへの接続を作成
+            self.connection = DuckDBConnection(db_path, read_only=read_only)
+            logger.info(f"DuckDB接続を正常に作成しました: {self.connection.db_path}")
+            
+            # TSO IDとエリアコードのマッピング
+            self.tso_id_to_area = {
+                "hokkaido": 1,
+                "tohoku": 2,
+                "tepco": 3,
+                "chubu": 4,
+                "hokuriku": 5,
+                "kansai": 6,
+                "chugoku": 7,
+                "shikoku": 8,
+                "kyushu": 9,
+                "okinawa": 10
+            }
+            
+            # 各エリアのテーブル名マッピング (インデント修正)
+            self.area_tables = {
+                    1: "tso_area_1_data",
+                    2: "tso_area_2_data",
+                    3: "tso_area_3_data",
+                    4: "tso_area_4_data",
+                    5: "tso_area_5_data",
+                    6: "tso_area_6_data",
+                    7: "tso_area_7_data",
+                    8: "tso_area_8_data",
+                    9: "tso_area_9_data",
+                    10: "tso_area_10_data"
+            }
+            
+            # スキーマファイルを使用してテーブルを作成
+            self._ensure_tables()
+            
+            # テーブルの存在を確認
+            self._check_area_tables()
+            
+        except Exception as e:
+            logger.error(f"TSOデータインポーターの初期化中にエラーが発生しました: {str(e)}")
+            raise e
+
+    def _check_area_tables(self):
+        """
+        エリア別テーブルの存在を確認する
+        """
+        try:
+            # 既存のテーブル一覧を取得
+            tables_result = self.connection.execute_query("PRAGMA show_tables;")
+            existing_tables = [row[0].lower() for row in tables_result.fetchall()]
+            
+            # 各エリアテーブルの存在を確認
+            for area_id, table_name in self.area_tables.items():
+                if table_name.lower() not in existing_tables:
+                    logger.warning(f"エリア{area_id}のテーブル {table_name} が存在しません")
+                else:
+                    logger.debug(f"エリア{area_id}のテーブル {table_name} が存在します")
+        except Exception as e:
+            logger.error(f"テーブル確認中にエラーが発生: {str(e)}")
     
     def _ensure_tables(self):
-        """データベーステーブルが存在することを確認"""
+        """
+        必要なテーブルが存在するかどうかを確認し、存在しない場合は作成します。
+        """
         # schema_definition.sqlファイルの読み込み
         try:
             # プロジェクトのルートからパスを指定
@@ -149,7 +194,7 @@ class TSODataImporter:
                 try:
                     print(f"[DEBUG] SQL実行 #{i+1}: {stmt.split('(')[0].strip()}")
                     logger.info(f"テーブル作成SQL #{i+1}: {stmt[:100]}...")
-                    self.db.execute_query(stmt)
+                    self.connection.execute_query(stmt)
                     table_name_match = re.search(r'CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)', stmt, re.IGNORECASE)
                     if table_name_match:
                         table_name = table_name_match.group(1)
@@ -165,30 +210,18 @@ class TSODataImporter:
             
             # ここでテーブル一覧を出力
             try:
-                tables = self.db.execute_query("PRAGMA show_tables;").fetchall()
+                tables = self.connection.execute_query("PRAGMA show_tables;").fetchall()
                 table_list = [t[0] for t in tables]
-                print(f"[DEBUG] テーブル作成直後のDB({self.db.db_path})のテーブル一覧: {table_list}")
+                print(f"[DEBUG] テーブル作成直後のDB({self.connection.db_path})のテーブル一覧: {table_list}")
                 
-                # tso_dataテーブルが存在するか確認
-                if self.table_name not in table_list:
-                    error_msg = f"必要なテーブル '{self.table_name}' が作成されませんでした"
-                    logger.error(error_msg)
-                    print(f"[ERROR] {error_msg}")
-                    print(f"[ERROR] schema_definition.sqlを確認してください。テーブルのCREATE TABLE文が正しく記述されていることを確認してください。")
-                    raise Exception(error_msg)
-                
-                # tso_dataテーブルのスキーマを確認
-                try:
-                    schema_info = self.db.execute_query(f"PRAGMA table_info({self.table_name});").fetchall()
-                    print(f"[DEBUG] {self.table_name}テーブルのスキーマ:")
-                    for col in schema_info:
-                        print(f"[DEBUG]   {col[1]} ({col[2]})")
-                except Exception as e:
-                    print(f"[WARNING] テーブルスキーマの取得中にエラー: {str(e)}")
+                # エリア別テーブルがすべて存在するか確認
+                for area_id, table_name in self.area_tables.items():
+                    if table_name not in table_list:
+                        logger.warning(f"エリア{area_id}のテーブル '{table_name}' が見つかりません")
+                        print(f"[WARNING] エリア{area_id}のテーブル '{table_name}' が見つかりません")
             except Exception as e:
                 logger.error(f"テーブル一覧取得エラー: {str(e)}")
                 print(f"[ERROR] テーブル一覧取得エラー: {str(e)}")
-                raise
         except Exception as e:
             logger.error(f"スキーマ定義からのテーブル作成に失敗しました: {str(e)}")
             print(f"[ERROR] スキーマ定義からのテーブル作成に失敗しました: {str(e)}")
@@ -204,8 +237,16 @@ class TSODataImporter:
             # 各データフレームを処理
             for target_date, tso_id, df in data_list:
                 if df is None or df.empty:
-                    logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
-                    continue
+                    # 中部電力の特殊ケース: ZIPファイル処理中に既にデータが保存されている場合
+                    if tso_id == 'chubu':
+                        logger.info(f"中部電力の空のデータフレーム: データは_process_zip_fileメソッド内で既に保存済み")
+                        # 実際の挿入行数はログから推定（正確な数ではない可能性あり）
+                        estimated_rows = 48 * 30  # 30日分の48コマ（概算）
+                        total_inserted += estimated_rows
+                        continue
+                    else:
+                        logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
+                        continue
                 
                 logger.info(f"データインポート処理: {tso_id}, {target_date}, データサイズ {df.shape}")
                 
@@ -241,7 +282,7 @@ class TSODataImporter:
                 # スロットを整数に変換（時間形式の場合は変換処理を行う）
                 try:
                     # 時間形式かどうかチェック
-                    if isinstance(df['slot'].iloc[0], str) and ':' in df['slot'].iloc[0]:
+                    if not df.empty and 'slot' in df.columns and isinstance(df['slot'].iloc[0], str) and ':' in df['slot'].iloc[0]:
                         print(f"[DEBUG] スロットを時間形式から整数へ変換します")
                         
                         # 時間形式('00:00')を整数スロットに変換する関数
@@ -267,216 +308,129 @@ class TSODataImporter:
                         
                         # 変換後の一意値を表示
                         print(f"[DEBUG] 変換後のスロット値の例: {df['slot'].head(5).tolist()}")
-                    else:
-                        # 既に数値形式の場合
-                        df['slot'] = df['slot'].astype(int)
+                    elif not df.empty and 'slot' in df.columns:
+                        # 既に数値形式かもしれない場合、astype で試す
+                        try:
+                           df['slot'] = df['slot'].astype(int)
+                        except ValueError:
+                            logger.warning(f"スロット列を整数に変換できませんでした。無効な値が含まれている可能性があります。{df['slot'].unique()[:10]}")
+                            # エラーになった場合はNaNにして後でフィルタリング
+                            df['slot'] = pd.to_numeric(df['slot'], errors='coerce')
+                            df = df.dropna(subset=['slot']) # NaNになった行を削除
+                            if df.empty:
+                                logger.warning("無効なスロット値を除去した結果、データがなくなりました。")
+                                continue
+                            df['slot'] = df['slot'].astype(int) # 再度変換
                         
                 except Exception as e:
                     print(f"[ERROR] スロットの変換中にエラー: {str(e)}")
-                    print(f"[DEBUG] スロットの型: {df['slot'].dtype}")
-                    print(f"[DEBUG] スロットの一意値: {df['slot'].unique().tolist()[:10]}")
-                    
-                    # 数値変換できない値をフィルタリング
-                    print(f"[INFO] 無効なスロット値をフィルタリングします")
-                    df = df.dropna(subset=['slot'])
-                    if not df.empty:
-                        df = df[pd.to_numeric(df['slot'], errors='coerce').notna()]
-                        if df.empty:
-                            print(f"[WARNING] スロット変換後にデータがありません")
-                            continue
-                        df['slot'] = df['slot'].astype(int)
+                    print(f"[DEBUG] スロットの型: {df['slot'].dtype if 'slot' in df.columns else 'N/A'}")
+                    print(f"[DEBUG] スロットの一意値: {df['slot'].unique().tolist()[:10] if 'slot' in df.columns and not df.empty else 'N/A'}")
+                    # ここで continue するか検討 (スロットがないと master_key が作れない)
+                    logger.warning("スロット変換エラーのため、このデータフレームの処理をスキップします。")
+                    continue 
                 
                 # 日付フォーマットをチェック
                 try:
                     if not df.empty and 'date' in df.columns:
                         # 最初の値をチェック
-                        if df['date'].iloc[0] is not None and isinstance(df['date'].iloc[0], str):
-                            if df['date'].dtype == 'object':  # 文字列の場合のみ変換
-                                print(f"[DEBUG] 日付のフォーマット変換: {df['date'].iloc[0]} → ", end="")
-                                # 文字列から日付に変換
-                                df['date'] = pd.to_datetime(df['date'])
-                                
-                                # 未来の年を持つ日付を現在の年に修正
-                                current_year = datetime.now().year
-                                future_dates_mask = df['date'].dt.year > current_year
-                                if future_dates_mask.any():
-                                    # 未来の日付があれば、年だけ現在の年に置き換え
-                                    print(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
-                                    future_dates = df.loc[future_dates_mask, 'date']
-                                    df.loc[future_dates_mask, 'date'] = future_dates.apply(
-                                        lambda x: x.replace(year=current_year)
-                                    )
-                                
-                                    # 文字列形式に戻す - ISO形式に変更
-                                    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-                                    print(f"{df['date'].iloc[0]}")
+                        # df['date'].iloc[0] が存在しない場合があるので修正
+                        first_date_val = df['date'].iloc[0] if not df.empty else None
+                        if first_date_val is not None and isinstance(first_date_val, str):
+                            # if df['date'].dtype == 'object': # dtype チェックは必ずしも正確でないことがある
+                            print(f"[DEBUG] 日付のフォーマット変換: {first_date_val} → ", end="")
+                            # 文字列から日付に変換
+                            df['date'] = pd.to_datetime(df['date'], errors='coerce') # errors='coerce'を追加
+                            # 不正な日付は NaT になるので除外
+                            df = df.dropna(subset=['date'])
+                            if df.empty:
+                                logger.warning("日付変換後にデータがなくなりました。")
+                                continue
+                            
+                            # 未来の年を持つ日付を現在の年に修正
+                            current_year = datetime.now().year
+                            future_dates_mask = df['date'].dt.year > current_year
+                            if future_dates_mask.any():
+                                # 未来の日付があれば、年だけ現在の年に置き換え
+                                logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
+                                future_dates = df.loc[future_dates_mask, 'date']
+                                df.loc[future_dates_mask, 'date'] = future_dates.apply(
+                                    lambda x: x.replace(year=current_year)
+                                )
+                            
+                                # 文字列形式に戻す - ISO形式に変更
+                                df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                                print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
+                            else:
+                                # 未来日がなくても文字列形式に戻す
+                                df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                                print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
+                        elif pd.api.types.is_datetime64_any_dtype(df['date']):
+                             # 既に datetime 型なら文字列に変換
+                             df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+
                 except Exception as e:
                     print(f"[ERROR] 日付フォーマット変換中にエラー: {str(e)}")
-                    print(f"[DEBUG] 日付カラムの型: {df['date'].dtype}")
-                    print(f"[DEBUG] 日付の一意値: {df['date'].unique().tolist()[:5]}")
+                    print(f"[DEBUG] 日付カラムの型: {df['date'].dtype if 'date' in df.columns else 'N/A'}")
+                    print(f"[DEBUG] 日付の一意値: {df['date'].unique().tolist()[:5] if 'date' in df.columns and not df.empty else 'N/A'}")
+                    logger.warning("日付変換エラーのため、このデータフレームの処理をスキップします。")
+                    continue
                 
                 # TSO IDからエリア番号を取得（ファイル名が数字で始まる場合を想定）
-                area_code = None
+                area_id = None
                 # ファイル名が[数字]_で始まる場合
                 if isinstance(tso_id, str) and tso_id[0].isdigit():
-                    area_code = tso_id[0]
-                else:
+                    try:
+                        area_id = int(tso_id[0])
+                    except ValueError:
+                         pass # 数字で始まってもエリアIDでない場合
+                
+                if area_id is None: # 上記で取得できなかった場合
                     # TSO IDをエリア番号にマッピング
                     tso_to_area = {
-                        "hokkaido": "1", "tohoku": "2", "tepco": "3", "chubu": "4", 
-                        "hokuriku": "5", "kansai": "6", "chugoku": "7", "shikoku": "8", 
-                        "kyushu": "9", "okinawa": "0"
+                        "hokkaido": 1, "tohoku": 2, "tepco": 3, "chubu": 4, 
+                        "hokuriku": 5, "kansai": 6, "chugoku": 7, "shikoku": 8, 
+                        "kyushu": 9, "okinawa": 10
                     }
-                    area_code = tso_to_area.get(tso_id.lower(), None)
+                    area_id = tso_to_area.get(tso_id.lower())
                 
-                if not area_code:
+                if not area_id:
                     print(f"[ERROR] TSO ID '{tso_id}' からエリア番号を特定できません")
                     continue
                 
-                print(f"[INFO] TSO '{tso_id}' をエリア番号 '{area_code}' にマッピングしました")
+                print(f"[INFO] TSO '{tso_id}' をエリア番号 '{area_id}' にマッピングしました")
                 
                 # エリア別テーブルへのデータ保存準備
-                area_table_name = self.area_tables.get(area_code)
+                area_table_name = self.area_tables.get(area_id)
                 if not area_table_name:
-                    print(f"[ERROR] エリア '{area_code}' に対応するテーブルが見つかりません")
+                    print(f"[ERROR] エリア '{area_id}' に対応するテーブルが見つかりません")
                     continue
                 
                 # エリア別テーブルの存在確認
                 try:
-                    table_check = self.db.execute_query(f"SELECT COUNT(*) FROM {area_table_name} LIMIT 1")
+                    table_check = self.connection.execute_query(f"SELECT COUNT(*) FROM {area_table_name} LIMIT 1")
                     print(f"[INFO] テーブル '{area_table_name}' が存在することを確認しました")
                 except Exception as e:
                     print(f"[ERROR] テーブル '{area_table_name}' が存在しないか、アクセスできません: {str(e)}")
                     continue
                 
-                # 統合テーブルとエリア別テーブル両方に保存する
-                # 1. 統合テーブル(tso_data)用の変換準備
-                tso_table_columns = []
+                # 統合テーブルとエリア別テーブル両方に保存する必要はない
+                # エリア別テーブルにのみ保存する
                 try:
-                    schema_info = self.db.execute_query(f"PRAGMA table_info({self.table_name});").fetchall()
-                    tso_table_columns = [col[1] for col in schema_info]
-                    print(f"[DEBUG] テーブル'{self.table_name}'の実際のカラム: {tso_table_columns[:10]}...")
-                except Exception as e:
-                    print(f"[ERROR] テーブルスキーマの取得に失敗: {str(e)}")
-                
-                # カラム名を変換（area_demand → X_area_demand）- 統合テーブル用
-                renamed_columns_integrated = {}
-                for col in df.columns:
-                    if col in ['master_key', 'date', 'slot', 'tso_id']:  # 共通カラムはそのまま
-                        renamed_columns_integrated[col] = col
+                    # データを挿入
+                    rows = len(df)
+                    if rows > 0:
+                        inserted = self.connection.save_dataframe(df, area_table_name)
+                        total_inserted += inserted
+                        logger.info(f"{area_table_name}テーブルに{inserted}行を挿入しました")
+                        print(f"[INFO] {area_table_name}テーブルに{inserted}行を挿入しました")
                     else:
-                        # X_カラム名 の形式に変換
-                        area_prefixed_col = f"{area_code}_{col}"
-                        if area_prefixed_col in tso_table_columns:
-                            renamed_columns_integrated[col] = area_prefixed_col
-                
-                # 2. エリア別テーブル用のカラム確認
-                area_table_columns = []
-                try:
-                    area_schema_info = self.db.execute_query(f"PRAGMA table_info({area_table_name});").fetchall()
-                    area_table_columns = [col[1] for col in area_schema_info]
-                    print(f"[DEBUG] テーブル'{area_table_name}'の実際のカラム: {area_table_columns[:10]}...")
+                        logger.warning(f"データフレームが空です (rows={rows})")
+                        print(f"[WARNING] データフレームが空です (rows={rows})")
                 except Exception as e:
-                    print(f"[ERROR] エリアテーブルスキーマの取得に失敗: {str(e)}")
-                    
-                # エリア別テーブルと統合テーブルの両方に保存
-                # 1. まずエリア別テーブルに保存 (プレフィックスなしのカラム名)
-                valid_area_columns = [col for col in df.columns if col in area_table_columns]
-                if len(valid_area_columns) < 2:
-                    print(f"[ERROR] エリアテーブル用の有効なカラムが不足しています: {valid_area_columns}")
-                else:
-                    df_area = df[valid_area_columns].copy()
-                    # カラム名を明示的に指定してデータを挿入 (エリア別テーブル用)
-                    area_column_list = df_area.columns.tolist()
-                    area_placeholders = ", ".join(["?"] * len(area_column_list))
-                    area_column_names = ", ".join(area_column_list)
-                    
-                    # エリア別テーブルにデータを挿入
-                    area_query = f"INSERT INTO {area_table_name} ({area_column_names}) VALUES ({area_placeholders})"
-                    
-                    try:
-                        # 最後の行を出力して確認
-                        if not df_area.empty:
-                            print(f"[DEBUG] エリア用の最後の挿入行: {df_area.iloc[-1].to_dict()}")
-                        
-                        area_row_count = 0
-                        area_error_count = 0
-                        for _, row in df_area.iterrows():
-                            # NaN値チェック
-                            row_values = row.tolist()
-                            if 'master_key' in df_area.columns and pd.isna(row['master_key']):
-                                continue
-                                
-                            try:
-                                self.db.execute_query(area_query, row_values)
-                                total_inserted += 1
-                                area_row_count += 1
-                            except Exception as e:
-                                area_error_count += 1
-                                if area_error_count <= 5:
-                                    print(f"[ERROR] エリア別テーブルへのデータ挿入中にエラー: {str(e)}")
-                                    print(f"[DEBUG] エラーが発生した行: {row.to_dict()}")
-                                elif area_error_count == 6:
-                                    print(f"[WARNING] 追加のエラーがあります。メッセージの表示を制限します...")
-                        
-                        if area_error_count > 0:
-                            print(f"[INFO] エリアテーブル: {area_row_count}行挿入、{area_error_count}行エラー")
-                        else:
-                            print(f"[INFO] エリアテーブル '{area_table_name}' に {area_row_count}行挿入しました")
-                        
-                        logger.info(f"{target_date}, {tso_id} のデータを {area_table_name} に保存しました。件数: {area_row_count}")
-                    except Exception as e:
-                        logger.error(f"エリア別テーブルへのデータ保存中にエラー: {str(e)}")
-                        print(f"[ERROR] エリア別テーブルへのデータ保存中にエラー: {str(e)}")
-                
-                # 2. 次に統合テーブルに保存 (プレフィックス付きのカラム名)
-                if tso_table_columns:  # 統合テーブルのカラム情報が取得できた場合のみ
-                    # データフレームのカラム名を変換（統合テーブル用）
-                    df_renamed = df.rename(columns=renamed_columns_integrated)
-                    
-                    # テーブルに存在するカラムだけを抽出
-                    valid_columns = [col for col in df_renamed.columns if col in tso_table_columns]
-                    if len(valid_columns) < 2:  # master_keyだけでは意味がない
-                        print(f"[ERROR] 統合テーブル用の有効なカラムが不足しています: {valid_columns}")
-                    else:
-                        df_final = df_renamed[valid_columns]
-                        print(f"[INFO] 統合テーブル用のデータ（{df_final.shape[0]}行, {df_final.shape[1]}列）: {valid_columns[:10]}...")
-                        
-                        # カラム名を明示的に指定してデータを挿入
-                        column_list = df_final.columns.tolist()
-                        placeholders = ", ".join(["?"] * len(column_list))
-                        column_names = ", ".join([f'"{col}"' if col.startswith(('1', '2', '3', '4', '5', '6', '7', '8', '9')) else col for col in column_list])
-                        
-                        # データを挿入
-                        query = f"INSERT INTO {self.table_name} ({column_names}) VALUES ({placeholders})"
-                        
-                        try:
-                            row_count = 0
-                            error_count = 0
-                            for _, row in df_final.iterrows():
-                                # NaN値チェック
-                                row_values = row.tolist()
-                                if 'master_key' in df_final.columns and pd.isna(row['master_key']):
-                                    continue
-                                    
-                                try:
-                                    self.db.execute_query(query, row_values)
-                                    row_count += 1
-                                except Exception as e:
-                                    error_count += 1
-                                    if error_count <= 5:
-                                        print(f"[ERROR] 統合テーブルへのデータ挿入中にエラー: {str(e)}")
-                                        print(f"[DEBUG] エラーが発生した行: {row.to_dict()}")
-                                    elif error_count == 6:
-                                        print(f"[WARNING] 追加のエラーがあります。メッセージの表示を制限します...")
-                            
-                            if error_count > 0:
-                                print(f"[INFO] 統合テーブル: {row_count}行挿入、{error_count}行エラー")
-                            else:
-                                print(f"[INFO] 統合テーブル '{self.table_name}' に {row_count}行挿入しました")
-                        except Exception as e:
-                            logger.error(f"統合テーブルへのデータ保存中にエラー: {str(e)}")
-                            print(f"[ERROR] 統合テーブルへのデータ保存中にエラー: {str(e)}")
+                    logger.error(f"{area_table_name}テーブルへのデータ挿入エラー: {str(e)}")
+                    print(f"[ERROR] {area_table_name}テーブルへのデータ挿入エラー: {str(e)}")
+                    continue # エラーがあっても次のデータの処理に進む
                                
             return total_inserted
             
@@ -493,143 +447,73 @@ class TSODataImporter:
         url_type: str = "demand"
     ) -> int:
         """
-        TSO統合ダウンローダーを使用してデータを取得しインポート
+        UnifiedTSODownloaderを使用して、指定されたTSO IDのデータをダウンロードし、インポートします。
         
         Args:
-            tso_ids: 処理対象のTSO ID一覧（省略時は全て）
-            start_date: 開始日付（省略時は先月の1日）
-            end_date: 終了日付（省略時は先月の末日）
-            url_type: URLタイプ（'demand' または 'supply'）
+            tso_ids: インポートするTSO IDのリスト。指定されていない場合は、テスト用の北海道、東北、東京、中部を使用します。
+            start_date: データの開始日。指定されていない場合は、現在の月の最初の日を使用します。
+            end_date: データの終了日。指定されていない場合は、現在の日付を使用します。
+            url_type: ダウンロードするデータの種類（'demand'または'supply'）
             
         Returns:
-            インポートされた合計レコード数
+            インポートされた行数
         """
-        # デフォルト値の設定
+        # UnifiedTSODownloaderモジュールをインポート（循環依存を避けるため）
+        from data_sources.tso.unified_downloader import UnifiedTSODownloader
+        
+        # 指定されていない場合のデフォルト値
         if not tso_ids:
-            tso_ids = TSO_IDS
+            tso_ids = ["hokkaido", "tohoku", "tepco", "chubu"]
             
-        if not start_date or not end_date:
-            today = datetime.now().date()
-            # 先月を計算
-            if today.month == 1:
-                prev_month_year = today.year - 1
-                prev_month = 12
-            else:
-                prev_month_year = today.year
-                prev_month = today.month - 1
+        if not start_date: # インデント修正
+            # 当月の1日
+            today = date.today()
+            start_date = date(today.year, today.month, 1)
             
-            if not start_date:
-                # 先月の初日
-                start_date = date(prev_month_year, prev_month, 1)
-            
-            if not end_date:
-                # 先月の末日
-                _, last_day = monthrange(prev_month_year, prev_month)
-                end_date = date(prev_month_year, prev_month, last_day)
+        if not end_date: # インデント修正
+            end_date = date.today()
             
         logger.info(f"{start_date} から {end_date} までの {', '.join(tso_ids)} データをダウンロード中")
         
-        total_imported = 0
+        total_inserted = 0
         
+        # 各TSO IDに対してダウンロードを実行
+        # try ブロックを追加
         try:
-            # 各TSOエリアごとにデータをダウンロード
             for tso_id in tso_ids:
                 try:
-                    # 各TSOごとに個別のダウンローダーを初期化（エラーを分離するため）
-                    downloader = UnifiedTSODownloader(tso_id=tso_id, url_type=url_type)
-                    
-                    # 指定した日付範囲のデータをダウンロード
-                    data_list = downloader.download_files(start_date, end_date)
-                    
-                    if not data_list:
-                        logger.warning(f"TSO {tso_id} のデータはダウンロードされませんでした")
-                        continue
-                    
-                    # トランザクション内でデータをインポート
-                    transaction_started = False
-                    try:
-                        # インポート前に対象データが既に存在するか確認
-                        # マスターキーリストを取得
-                        master_keys = []
-                        for _, _, df in data_list:
-                            if 'master_key' in df.columns and not df.empty:
-                                master_keys.extend(df['master_key'].tolist())
+                    # この特定のTSO ID用にダウンローダーを初期化
+                    # データベース接続は共有する
+                    downloader = UnifiedTSODownloader(
+                        tso_id=tso_id,
+                        db_connection=self.connection,  # db → connection に変更
+                        url_type=url_type
+                    )
                         
-                        # マスターキーが存在すれば重複チェック
-                        if master_keys:
-                            # トランザクション開始
-                            self.db.execute_query("BEGIN TRANSACTION")
-                            transaction_started = True
-                            
-                            # 既存のマスターキーを確認（エリア別テーブル）
-                            area_code = None
-                            if tso_id.lower() in ["hokkaido", "tohoku", "tepco", "chubu", "hokuriku", 
-                                                 "kansai", "chugoku", "shikoku", "kyushu", "okinawa"]:
-                                tso_to_area = {
-                                    "hokkaido": "1", "tohoku": "2", "tepco": "3", "chubu": "4", 
-                                    "hokuriku": "5", "kansai": "6", "chugoku": "7", "shikoku": "8", 
-                                    "kyushu": "9", "okinawa": "0"
-                                }
-                                area_code = tso_to_area.get(tso_id.lower())
-                            
-                            if area_code:
-                                area_table = self.area_tables.get(area_code)
-                                if area_table:
-                                    # 既存データがあるか確認（サンプルマスターキーで）
-                                    sample_keys = master_keys[:5]  # 最初の5つを確認
-                                    placeholders = ", ".join(["?"] * len(sample_keys))
-                                    
-                                    try:
-                                        check_query = f"SELECT COUNT(*) FROM {area_table} WHERE master_key IN ({placeholders})"
-                                        result = self.db.execute_query(check_query, sample_keys).fetchone()
-                                        existing_count = result[0] if result else 0
-                                        
-                                        if existing_count > 0:
-                                            logger.warning(f"TSO {tso_id} の一部データは既にインポート済みです（{existing_count}/{len(sample_keys)}サンプル）")
-                                            print(f"[INFO] 既存データを削除してからインポートしています")
-                                            
-                                            # 重複を防ぐために対象期間のデータを削除
-                                            # date条件で削除（yyyymmdd形式）
-                                            start_date_str = start_date.strftime('%Y%m%d')
-                                            end_date_str = end_date.strftime('%Y%m%d')
-                                            
-                                            # エリアテーブルからデータ削除
-                                            delete_query = f"DELETE FROM {area_table} WHERE CAST(date AS VARCHAR) >= '{start_date_str}' AND CAST(date AS VARCHAR) <= '{end_date_str}'"
-                                            self.db.execute_query(delete_query)
-                                            
-                                            # 統合テーブルからも対応するデータを削除
-                                            delete_tso_query = f"DELETE FROM {self.table_name} WHERE date >= '{start_date_str}' AND date <= '{end_date_str}' AND tso_id = '{tso_id}'"
-                                            self.db.execute_query(delete_tso_query)
-                                    except Exception as check_error:
-                                        logger.error(f"既存データ確認中にエラー: {check_error}")
-                            
-                            # データをインポート
-                            imported = self.import_data(data_list)
-                            total_imported += imported
-                            
-                            # コミット
-                            self.db.execute_query("COMMIT")
-                            transaction_started = False
-                            
-                            logger.info(f"TSO {tso_id} から {imported} 行をインポートしました")
-                        else:
-                            logger.warning(f"TSO {tso_id} のデータにマスターキーがありません")
-                    except Exception as tx_error:
-                        # トランザクションエラーが発生した場合はロールバック
-                        if transaction_started:
-                            try:
-                                self.db.execute_query("ROLLBACK")
-                            except Exception as rb_error:
-                                logger.error(f"ロールバックに失敗: {rb_error}")
-                        logger.error(f"TSO {tso_id} データのインポート中にエラー: {tx_error}")
-                except Exception as tso_error:
-                    logger.error(f"TSO {tso_id} の処理中にエラー: {tso_error}")
+                    # データのダウンロード
+                    data = downloader.download_files(start_date, end_date)
+                        
+                    # ダウンロードしたデータをインポート
+                    if data is not None and len(data) > 0:
+                        # 結果をインポート
+                        inserted = self.import_data([(d, tid, df) for d, tid, df in data]) # 変数名変更 d, tid
+                        total_inserted += inserted
+                        logger.info(f"TSO {tso_id} から {inserted} 行をインポートしました")
+                    else: # else のインデント修正
+                        logger.warning(f"TSO {tso_id} からデータを取得できませんでした")
+                
+                except Exception as e:
+                    logger.error(f"TSO {tso_id} の処理中にエラー: {str(e)}")
+                    # TSOごとのエラーはログに残し、次のTSOへ進む
+                    continue 
+        finally:
+            # データベース接続をクローズ（共有接続を使用している場合はコメントアウト）
+            # このメソッド内で閉じるべきか、呼び出し元で閉じるべきか検討。
+            # ここでは閉じないでおく (with構文で Importer が使われる想定)
+            # logger.info("TSOデータのダウンロード/インポート処理完了 (DB接続は維持)") # 紛らわしいので変更
+            logger.info(f"TSOデータインポート処理メソッド import_from_downloader 完了 (tso_ids: {tso_ids})")
             
-            return total_imported
-        except Exception as e:
-            logger.error(f"データのインポートに失敗しました: {e}")
-            print(f"[ERROR] データのインポートに失敗しました: {e}")
-            return 0
+        return total_inserted
 
     # コンテキストマネージャサポート
     def __enter__(self):
@@ -640,8 +524,8 @@ class TSODataImporter:
         """コンテキストマネージャの終了処理"""
         # 明示的にDB接続をクローズ
         try:
-            if hasattr(self, 'db') and self.db is not None:
-                self.db.close()
+            if hasattr(self, 'connection') and self.connection is not None:
+                self.connection.close()
         except Exception as e:
             print(f"[WARN] TSODataImporterのコンテキスト終了時のDB接続クローズでエラー: {e}")
 

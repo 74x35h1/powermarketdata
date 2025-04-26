@@ -16,7 +16,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_sources.tso.unified_downloader import UnifiedTSODownloader
-from data_sources.db_connection import DuckDBConnection
+from db.duckdb_connection import DuckDBConnection
 # from data_sources.tso.tso_urls import get_tso_url, TSO_INFO
 
 # ロギングを設定

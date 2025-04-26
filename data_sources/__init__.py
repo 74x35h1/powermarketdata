@@ -5,7 +5,7 @@
 """
 
 # データベース接続
-from .db_connection import DuckDBConnection
+from db.duckdb_connection import DuckDBConnection
 
 # TSO（電力会社）関連
 from .tso import UnifiedTSODownloader

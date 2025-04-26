@@ -21,7 +21,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from data_sources.tso.unified_downloader import UnifiedTSODownloader
-from data_sources.tso.tso_urls import TSO_INFO, get_tso_id_from_area_code
+from data_sources.tso.tso_url_templates import TSO_INFO, get_tso_id_from_area_code
 
 # ロギングを設定
 logging.basicConfig(
