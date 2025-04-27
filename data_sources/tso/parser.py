@@ -297,9 +297,9 @@ class TSODataParser:
             'エリア需要': 'area_demand', '実績(万kw)': 'area_demand', # ()内の大文字小文字揺れ考慮
             '原子力': 'nuclear',
             '火力(lng)': 'LNG', '火力（ｌｎｇ）': 'LNG', # 全角・半角カッコ考慮
-            '火力(石炭)': 'coal',
-            '火力(石油)': 'oil',
-            '火力(その他)': 'other_fire',
+            '火力(石炭)': 'coal', '火力（石炭）': 'coal',  # 全角カッコ対応
+            '火力(石油)': 'oil', '火力（石油）': 'oil',    # 全角カッコ対応
+            '火力(その他)': 'other_fire', '火力（その他）': 'other_fire',  # 全角カッコ対応
             '水力': 'hydro',
             '地熱': 'geothermal',
             'バイオマス': 'biomass',
@@ -345,17 +345,23 @@ class TSODataParser:
              return pd.DataFrame()
 
         # --- 日付と時間の処理 (Rename後の列名を使用) ---
-        # 日付を YYYYMMDD 文字列に変換 (元形式 YYYY/MM/DD)
+        # 日付を YYYYMMDD 文字列に変換
         try:
-             # ★ rename後の 'date' 列を使用
-             df_renamed['date_str'] = pd.to_datetime(df_renamed['date'], format='%Y/%m/%d', errors='coerce').dt.strftime('%Y%m%d')
+             # 九州電力の場合は 'YYYYMMDD' 形式、その他はのTSOは 'YYYY/MM/DD' 形式
+             if tso_id == 'kyushu':
+                 # すでにYYYYMMDD形式の場合（先頭スペースを除去）
+                 df_renamed['date_str'] = df_renamed['date'].astype(str).str.strip().str.replace('/', '')
+             else:
+                 # YYYY/MM/DD -> YYYYMMDD に変換
+                 df_renamed['date_str'] = pd.to_datetime(df_renamed['date'], format='%Y/%m/%d', errors='coerce').dt.strftime('%Y%m%d')
+             
              df_renamed = df_renamed.dropna(subset=['date_str']) # 不正な日付を除外
              if df_renamed.empty: # dropna の結果、空になった場合
                   logger.error("日付変換後に有効なデータがありません。")
                   return pd.DataFrame()
         except Exception as e:
              # ★ エラーメッセージも rename後の列名を使うように修正
-             logger.error(f"日付列 ('date') の変換エラー (YYYY/MM/DD -> YYYYMMDD): {e}", exc_info=True)
+             logger.error(f"日付列 ('date') の変換エラー: {e}", exc_info=True)
              return pd.DataFrame()
 
         # 時間をスロット番号 (1-48) に変換 (元形式 HH:MM)
@@ -363,10 +369,20 @@ class TSODataParser:
              if pd.isna(time_str):
                  return 0
              try:
+                 # 九州電力の場合は '時間:30' のような形式 
+                 if tso_id == 'kyushu':
+                     # 時間のみ（整数）の場合は ':30' をつけて処理
+                     if isinstance(time_str, (int, float)) or (isinstance(time_str, str) and time_str.isdigit()):
+                         time_str = f"{int(time_str)}:30"
+                     # HH:MM:SS 形式の場合は秒を切り捨て
+                     if isinstance(time_str, str) and time_str.count(':') == 2:
+                         time_parts = time_str.split(':')
+                         time_str = f"{time_parts[0]}:{time_parts[1]}"
+                 
                  hour, minute = map(int, str(time_str).split(':'))
                  slot = hour * 2 + (1 if minute == 0 else 2) # 00:00 -> 1, 00:30 -> 2
                  return 48 if slot == 0 and hour == 24 else slot # 24:00 -> 48 考慮
-             except Exception as e: # エラー内容もログに出力
+             except Exception as e:
                  logger.warning(f"不正な時間形式: '{time_str}' ({e})。 スロット0とします。")
                  return 0
         try:
@@ -514,12 +530,19 @@ class TSODataParser:
              if pd.isna(time_str):
                  return 0
              try:
-                 # HH:MM 形式を想定
+                 # 九州電力の場合は '時間:30' のような形式 
+                 if tso_id == 'kyushu':
+                     # 時間のみ（整数）の場合は ':30' をつけて処理
+                     if isinstance(time_str, (int, float)) or (isinstance(time_str, str) and time_str.isdigit()):
+                         time_str = f"{int(time_str)}:30"
+                     # HH:MM:SS 形式の場合は秒を切り捨て
+                     if isinstance(time_str, str) and time_str.count(':') == 2:
+                         time_parts = time_str.split(':')
+                         time_str = f"{time_parts[0]}:{time_parts[1]}"
+                 
                  hour, minute = map(int, str(time_str).split(':'))
-                 # 00:00 -> 1, 00:30 -> 2
-                 slot = hour * 2 + (1 if minute == 0 else 2)
-                 # 24:00 は 48 として扱う (もしあれば)
-                 return 48 if slot == 0 and hour == 24 else slot
+                 slot = hour * 2 + (1 if minute == 0 else 2) # 00:00 -> 1, 00:30 -> 2
+                 return 48 if slot == 0 and hour == 24 else slot # 24:00 -> 48 考慮
              except Exception as e:
                  logger.warning(f"中部電力: 不正な時間形式 '{time_str}' ({e})。 スロット0とします。")
                  return 0

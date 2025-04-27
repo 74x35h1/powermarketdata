@@ -110,24 +110,24 @@ _TSO_URL_FORMATS = {
         "supply": "https://powergrid.chuden.co.jp/denki_yoho_content_data/eria_jukyu_{year}.zip"
     },
     "hokuriku": {
-        "demand": "https://www.rikuden.co.jp/nw_jyukyuu/csv/area_{year_month}.csv",
-        "supply": "https://www.rikuden.co.jp/nw_jyukyuu/csv/area_{year_month}.csv"
+        "demand": "https://www.rikuden.co.jp/nw/denki-yoho/csv/eria_jukyu_{year_month}_{version}.csv",
+        "supply": "https://www.rikuden.co.jp/nw/denki-yoho/csv/eria_jukyu_{year_month}_{version}.csv"
     },
     "kansai": {
-        "demand": "https://www.kansai-td.co.jp/yamasou/juyo-jisseki/jisseki/ji_{year_month}.csv",
-        "supply": "https://www.kansai-td.co.jp/yamasou/juyo-jisseki/jisseki/ji_{year_month}.csv"
+        "demand": "https://www.kansai-td.co.jp/interchange/denkiyoho/area-performance/eria_jukyu_{year_month}_{version}.csv",
+        "supply": "https://www.kansai-td.co.jp/interchange/denkiyoho/area-performance/eria_jukyu_{year_month}_{version}.csv"
     },
     "chugoku": {
-        "demand": "https://www.energia.co.jp/nw/service/supply/juyo/sys/juyo-jisseki-{year_month}.csv",
-        "supply": "https://www.energia.co.jp/nw/service/supply/juyo/sys/juyo-jisseki-{year_month}.csv"
+        "demand": "https://www.energia.co.jp/nw/jukyuu/sys/eria_jukyu_{year_month}_{version}.csv{query_params}",
+        "supply": "https://www.energia.co.jp/nw/jukyuu/sys/eria_jukyu_{year_month}_{version}.csv{query_params}"
     },
     "shikoku": {
-        "demand": "https://www.yonden.co.jp/nw/assets/renewable_energy/data/download_juyo/{year_month}_jukyu.csv",
-        "supply": "https://www.yonden.co.jp/nw/assets/renewable_energy/data/download_juyo/{year_month}_jukyu.csv"
+        "demand": "https://www.yonden.co.jp/nw/supply_demand/csv/eria_jukyu_{year_month}_{version}.csv",
+        "supply": "https://www.yonden.co.jp/nw/supply_demand/csv/eria_jukyu_{year_month}_{version}.csv"
     },
     "kyushu": {
-        "demand": "https://www.kyuden.co.jp/td_service_wheeling_rule-document_disclosure-area-performance_{year_month}.csv",
-        "supply": "https://www.kyuden.co.jp/td_service_wheeling_rule-document_disclosure-area-performance_{year_month}.csv"
+        "demand": "https://www.kyuden.co.jp/td_area_jukyu/csv/eria_jukyu_{year_month}_{version}.csv{query_params}",
+        "supply": "https://www.kyuden.co.jp/td_area_jukyu/csv/eria_jukyu_{year_month}_{version}.csv{query_params}"
     },
     "okinawa": {
         "demand": "https://www.okiden.co.jp/td-service/renewable-energy/supply_demand/csv/area_jokyo_{year_month}.csv",
@@ -135,8 +135,23 @@ _TSO_URL_FORMATS = {
     }
 }
 
+# TSO毎のバージョン情報（デフォルト値）
+_TSO_VERSION_DEFAULTS = {
+    "hokuriku": "05",
+    "kansai": "06",
+    "chugoku": "07",
+    "shikoku": "08", 
+    "kyushu": "09"
+}
+
+# TSO毎のクエリパラメータ（必要な場合）
+_TSO_QUERY_PARAMS = {
+    "chugoku": "?ver=1744808680187",  # 中国電力のクエリパラメータ
+    "kyushu": "?17457538"             # 九州電力のクエリパラメータ
+}
+
 # target_date を受け取り、それに基づいてURLを動的に生成する関数
-def get_tso_url(tso_id: str, url_type: str, target_date: date) -> str:
+def get_tso_url(tso_id: str, url_type: str, target_date: date, version: str = None, query_params: str = None) -> str:
     """
     指定されたTSO ID、URLタイプ、日付に基づいてURLを取得します。
     内部の _TSO_URL_FORMATS を使用します。
@@ -145,6 +160,8 @@ def get_tso_url(tso_id: str, url_type: str, target_date: date) -> str:
         tso_id: TSO ID (例: 'tepco', 'chubu')
         url_type: データの種類 ('demand' または 'supply')
         target_date: 対象日付
+        version: バージョン番号（オプション）。指定されない場合はデフォルト値を使用
+        query_params: クエリパラメータ（オプション）。指定されない場合はデフォルト値を使用
 
     Returns:
         URL文字列
@@ -171,10 +188,32 @@ def get_tso_url(tso_id: str, url_type: str, target_date: date) -> str:
     # フォーマット文字列を取得
     url_format = _TSO_URL_FORMATS[tso_id][url_type]
 
+    # バージョン番号の設定
+    if version is None and tso_id in _TSO_VERSION_DEFAULTS:
+        version = _TSO_VERSION_DEFAULTS[tso_id]
+        
+    # クエリパラメータの設定
+    if query_params is None and tso_id in _TSO_QUERY_PARAMS:
+        query_params = _TSO_QUERY_PARAMS[tso_id]
+    else:
+        query_params = ""
+
     # プレースホルダーを置換
     try:
-        # f-string ではなく .format() を使用して置換
-        url = url_format.format(year=year, year_month=year_month)
+        format_args = {
+            "year": year,
+            "year_month": year_month
+        }
+        
+        # versionパラメータがあれば使用
+        if version and "{version}" in url_format:
+            format_args["version"] = version
+            
+        # クエリパラメータがあれば使用
+        if "{query_params}" in url_format:
+            format_args["query_params"] = query_params
+            
+        url = url_format.format(**format_args)
     except KeyError as e:
         logger.error(f"URLフォーマット置換中にエラー ({url_format}): キー {e} が見つかりません")
         raise ValueError(f"URLフォーマットの置換に失敗 ({url_format}): {e}")

@@ -8,47 +8,65 @@
 2. JEPXからの市場価格データの取得
 3. データベースへの保存と分析
 
-## ディレクトリ構造
+## ディレクトリ構成
 
 ```
 powermarketdata/
-├── cli/                      # CLIモジュール
-│   ├── __init__.py
-│   └── menu.py               # インタラクティブメニュー
-├── config/                   # 設定ファイル
-│   └── tso_urls.json         # TSO URLs設定
-├── data/                     # ダウンロードされたデータ格納
-├── data_sources/             # データソースパッケージ
-│   ├── __init__.py           # パッケージ初期化
-│   ├── jepx/                 # JEPX（日本卸電力取引所）データ
-│   │   ├── __init__.py
-│   │   ├── jepx_bid.py       # 入札データダウンローダー
-│   │   └── jepx_da_price.py  # 前日スポット価格ダウンローダー
-│   └── tso/                  # TSO（送電系統運用者）データ
+├── cli/
+│   └── menu.py
+├── config/
+│   └── tso_urls.json
+├── data_sources/
+│   ├── jepx/
+│   │   └── jepx_da_price.py
+│   └── tso/
 │       ├── __init__.py
-│       ├── db_importer.py    # データベースインポーター
-│       ├── tso_urls.py       # URL・エリア情報
-│       └── unified_downloader.py # 統合ダウンローダー
-├── db/                       # データベース関連モジュール
-│   ├── __init__.py
-│   ├── duckdb_connection.py  # DuckDB接続管理
-│   └── schema_definition.sql # スキーマ定義
-├── docs/                     # ドキュメント
-├── examples/                 # サンプルコード
-│   ├── import_tso_data_to_db.py    # DBインポート例
-│   └── interactive_tso_downloader.py # 対話型CLIの例
-├── exports/                  # エクスポートデータ格納
-├── exporter/                 # データエクスポート機能
-├── ingestion/                # データ取り込み機能
-├── logs/                     # ログファイル
-├── tests/                    # テストコード
-├── transformation/           # データ変換機能
-├── main.py                   # メインアプリケーションエントリーポイント
-├── project_structure.md      # このファイル
-├── README.md                 # プロジェクト説明
-├── requirements.txt          # 依存パッケージリスト
-└── run_tso_cli.sh            # 対話型CLI実行スクリプト
+│       ├── db_importer.py         # TSOデータDBインポート
+│       ├── downloader.py          # TSOデータダウンロード（補助）
+│       ├── parser.py              # TSOデータパース・標準化
+│       ├── tso_url_templates.py   # TSOごとのURLテンプレート管理
+│       └── unified_downloader.py  # 統合ダウンローダー（全TSO対応）
+├── db/
+│   ├── duckdb_connection.py
+│   └── schema_definition.sql
+├── examples/
+│   └── import_tso_data_to_db.py
+├── main.py
+├── README.md
+└── project_structure.md
 ```
+
+## data_sources/tso/ 各ファイルの役割
+
+- **unified_downloader.py**  
+  全TSO対応の統合ダウンローダー。日付範囲・複数TSO一括DL、ZIP展開、URL自動生成など。
+
+- **parser.py**  
+  TSOデータ（CSV/ZIP）のパース・標準化。列名マッピング、日付/時間変換、マスターキー生成、特殊フォーマット対応。
+
+- **db_importer.py**  
+  標準化済みTSOデータのDBインポート。エリア別・統合テーブル両対応。重複排除・トランザクション管理。
+
+- **tso_url_templates.py**  
+  各TSOのデータ取得URLテンプレート・エリア情報を一元管理。新TSO追加やURL変更も容易。
+
+- **downloader.py**  
+  個別用途や補助的なダウンロード処理。`unified_downloader.py`の補助や特殊ケース対応。
+
+## 拡張性
+
+- 新TSOや新フォーマット追加は、`tso_url_templates.py`と`parser.py`の拡張のみでOK。
+- 設定ファイル・モジュール分離により保守性・拡張性が高い。
+
+## 主要な処理フロー
+
+1. **URLテンプレート管理** → 2. **データダウンロード** → 3. **パース・標準化** → 4. **DB保存**
+
+## 参考：今後の拡張ポイント
+
+- 新TSO・新フォーマット対応
+- データ可視化・Web UI
+- 予測モデル・高度な分析
 
 ## 主要モジュールと機能
 
