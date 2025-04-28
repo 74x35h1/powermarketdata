@@ -48,9 +48,9 @@ class UnifiedTSODownloader:
     統合された日本の電力会社（TSO）データダウンローダー (オーケストレーター)
     ダウンロード、パース、DB保存の処理フローを管理する。
     """
-
+    
     def __init__(
-        self,
+        self, 
         tso_id: str = None,
         tso_ids: List[str] = None,
         db_connection: Optional[DuckDBConnection] = None,
@@ -70,10 +70,10 @@ class UnifiedTSODownloader:
         self.db_connection = db_connection or DuckDBConnection()
         self.url_type = url_type
         self.table_name_prefix = table_name # 特定のテーブル名を指定する場合
-
+        
         # 利用可能なTSO IDリストを外部モジュールから取得
         self.VALID_TSO_IDS = VALID_TSO_IDS
-
+        
         # 処理対象のTSO IDを設定
         if tso_id:
             self.tso_ids = [tso_id]
@@ -82,19 +82,19 @@ class UnifiedTSODownloader:
         else:
             # 指定がない場合はすべて
             self.tso_ids = self.VALID_TSO_IDS
-
+        
         # TSO IDの検証
         invalid_ids = [tid for tid in self.tso_ids if tid not in self.VALID_TSO_IDS]
         if invalid_ids:
             raise ValueError(f"無効なTSO ID: {invalid_ids}。有効なID: {self.VALID_TSO_IDS}")
-
+            
         # ダウンローダーとパーサーのインスタンスを作成
         # ParserにはDB接続を渡す (中部電力の重複チェック用)
         self.downloader = TSODataDownloader()
         self.parser = TSODataParser(db_connection=self.db_connection)
 
         logger.info(f"UnifiedTSODownloader初期化完了: TSOs=[{', '.join(self.tso_ids)}], URL Type={url_type}")
-
+    
     def download_files(
         self,
         start_date: date,
@@ -105,14 +105,14 @@ class UnifiedTSODownloader:
     ) -> List[Tuple[date, str, pd.DataFrame]]:
         """
         指定期間のすべてのデータファイルをダウンロード、パースし、(オプションで)DBに保存する。
-
+        
         Args:
             start_date: 開始日
             end_date: 終了日
             sleep_min: リクエスト間の最小待機時間（秒）
             sleep_max: リクエスト間の最大待機時間（秒）
             save_to_db: Trueの場合、取得したデータをDBに保存する
-
+        
         Returns:
             List[Tuple[date, str, DataFrame]]: 日付、TSO ID、処理済みデータフレームのタプルのリスト
                                               DB保存が有効な場合、保存後のDataFrameが返る。
@@ -239,7 +239,7 @@ class UnifiedTSODownloader:
                         continue # 次の月へ
 
                     logger.info(f"パース成功: {len(parsed_df)}行取得 (TSO={tso_id}, Month={target_date.strftime('%Y-%m')})")
-
+                        
                     # 4. DB保存 (オプション)
                     if save_to_db:
                         try:
@@ -263,7 +263,7 @@ class UnifiedTSODownloader:
 
         logger.info(f"全処理完了。合計 {len(processed_results)} 件の結果を取得しました。")
         return processed_results
-
+    
     def _save_to_database(self, df: pd.DataFrame, target_date: date, tso_id: str) -> None:
         """
         処理済みのDataFrameをデータベースに保存。
@@ -280,7 +280,7 @@ class UnifiedTSODownloader:
         if not self.db_connection:
             logger.error("データベース接続が利用できません。保存をスキップします。")
             raise ValueError("データベース接続が利用できません")
-
+        
         if df.empty:
             logger.warning(f"保存対象のDataFrameが空です。TSO={tso_id}, Date={target_date}")
             return
@@ -310,7 +310,7 @@ class UnifiedTSODownloader:
             # DataFrameをDBに保存 (DuckDBConnectionのメソッドを使用)
             self.db_connection.save_dataframe(df, table_name, if_exists='append')
             logger.info(f"DB保存完了: Table='{table_name}', Attempted={len(df)} rows") # 試行行数をログに出力
-
+            
         except Exception as e:
             logger.error(f"データベース保存エラー: Table={table_name}, TSO={tso_id}, Error={e}", exc_info=True)
             raise # エラーを再発生させて呼び出し元に通知
@@ -323,14 +323,14 @@ class UnifiedTSODownloader:
 if __name__ == "__main__":
     import sys
     import os
-
+    
     # プロジェクトのルートをインポートパスに追加
     # このファイルの場所基準でなく、起動スクリプトの場所基準が望ましい場合がある
     # ここでは既存のロジックを維持
     cli_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if cli_project_root not in sys.path:
         sys.path.insert(0, cli_project_root)
-
+    
     # 対話式CLIスクリプトを実行
     try:
         # examplesディレクトリからの相対インポートを試みる
@@ -343,4 +343,4 @@ if __name__ == "__main__":
         sys.exit(1)
     except Exception as e:
         logger.error(f"CLI実行中に予期せぬエラー: {e}", exc_info=True)
-        sys.exit(1)
+        sys.exit(1) 

@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS occto_reserve (
     PRIMARY KEY (date, hour, area)
 );
 
+CREATE TABLE IF NOT EXISTS occto_plant_operation (
+    date DATE,
+    time VARCHAR,
+    area VARCHAR,
+    plant_name VARCHAR,
+    plant_type VARCHAR,
+    output_kw DECIMAL(18,6),
+    processing_date DATE,
+    PRIMARY KEY (date, time, plant_name)
+);
+
 -- Futures Data
 CREATE TABLE IF NOT EXISTS futures_prices (
     date DATE,

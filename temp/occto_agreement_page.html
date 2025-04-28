@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    <title>ユニット別発電実績公開システム</title>
+
+
+    
+    <link rel="stylesheet" href="/hks-web-public/lib/jquery-ui/jquery-ui.min.css">
+    
+    <link href="/hks-web-public/lib/bootstrap/css/bootstrap.css" rel="stylesheet">
+    
+    <link href="/hks-web-public/lib/fontawesome/css/all.min.css" rel="stylesheet">
+    
+    <link href="/hks-web-public/assets/css/base.css" rel="stylesheet">
+    
+    <link href="/hks-web-public/assets/css/_fragments.css" rel="stylesheet">
+
+    
+    <link href="/hks-web-public/assets/css/HKSHS004.css" rel="stylesheet">
+    <link rel="icon" type="image/png" href="/hks-web-public/favicon.ico">
+</head>
+<body>
+		<nav class="navbar navbar-expand-xl navbar-dark kikyb-nav-bg" style="padding: 0.1rem 0rem; background-color: rgb(0, 112, 192) !important">
+			<div class="container-fluid" style="display: block; padding-left: 0px; padding-right: 0px;">
+				<span class="navbar-brand"> <img
+					src="/hks-web-public/assets/img/OCCTO_logo.jpg"
+					style="display: inline-block; height: 3.5rem; margin-right: 25px;"></img>
+					<span>ユニット別発電実績公開システム</span>
+				</span>
+				<div class="float-end">
+					<p class="text-end text-white" style="margin-top: 25px; margin-bottom: 0px;">
+						<a class="text-white" target="_blank" rel="noopener noreferrer" href="https://www.occto.or.jp/occtosystem2/manual.html">操作マニュアルへのリンク</a>&nbsp&nbsp
+						<span style="margin-right:15px">© 2023 OCCTO.</span>
+					</p>
+				</div>
+			</div>
+		</nav>
+			<div class="d-flex align-items-center px-3 hks-title login-title" style="margin-top:0px";></div>
+
+ 	<div class="container-md kikyb-container-bg px-0 mt-3">
+    	<div class="d-flex align-items-center px-3 hks-title">免責事項同意画面</div>
+    	<form id="disclaimerForm" action="/hks-web-public/disclaimer-agree/next" method="post" autocomplete="off">
+    	
+    	<div class="d-flex align-items-center px-3" >
+			<div class="text">
+				<span class="t-title">〇ご利用条件</span>
+				<span class="t-title">（1） ご利用条件について</span>
+				<span>当ウェブサイトをご利用される前に以下の事項をお読みいただき、これらの事項に同意された場合にのみご利用ください。</span>
+				
+				<span class="t-title">〇免責事項・著作権等</span>
+				<span class="t-title">（1） 著作権について</span>
+				<span class="d-flex">
+					<span>・</span>
+					<span>当ウェブサイトに掲載した個々の情報（文字、写真、イラスト、資料等）は著作権の対象となっています。また、当ウェブサイト全体も編集著作物として、著作権の対象となっており、共に日本国著作権法及び国際条約により保護されています。</span>
+				</span>
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>本機関ウェブサイトで公開している情報（以下「コンテンツ」といいます。）は、自由に利用できますが、その際は、出典を記載してください。また、コンテンツを編集・加工等して利用する場合は、出典とは別に、編集・加工等を行ったことを記載してください。</span>
+				</span>				
+				<span class="t-title">（2） 免責事項について</span>
+				<span class="d-flex">
+					<span>・</span>
+					<span>広域機関は、当ウェブサイトに掲載されている内容について、正確であるよう努め、システム上の不具合などにより、当ウェブサイトに掲載されている内容に誤りが生じた場合には遅滞なく訂正する等必要な措置を講じます。しかしながら、当ウェブサイトの情報の内容の正確性、有用性、確実性、完全性等につき、いかなる保証もするものではありません。</span>
+				</span>
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>また、利用者が当ウェブサイトの情報を使用されたこと、もしくは、使用になれなかったこと、また、当ウェブサイトをご利用になったことにより生じるいかなる損害についても責任を負うものではありません。</span>
+				</span>
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>公開される発電実績データは速報値であり、その性質上、データの欠落等が生じる場合がありますが、これらについて広域機関および一般送配電事業者は責任を負うものではありません。</span>
+				</span>
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>当ウェブサイトの構成、URL、掲載情報等を、予告なしに情報提供の休止・再開、および終了を行うことがあります。</span>
+				</span>	
+				<span class="t-title">（3） リンクについて</span>
+				<span>当ウェブサイトへのリンクは、原則として自由です。但し以下に該当するウェブサイトからのリンクや、リンク設定方法はお断りいたします。</span>
+				<span class="d-flex">
+					<span>・</span>
+					<span>法律・法令等に違反し又は違反するおそれがある内容を含んだウェブサイト</span>
+				</span>
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>公序良俗に反する内容を含んだウェブサイト</span>
+				</span>	
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>広域機関と何らかの提携または協力関係にあるものと誤認を生じさせるような形態、表示内容によるリンク</span>
+				</span>	
+				<span class="d-flex" style="margin-top:-25px;">
+					<span>・</span>
+					<span>フレームリンク等、当ウェブサイトの明確性が損なわれる形のリンク</span>
+				</span>	
+				<span>利用者が上記諸事項のいずれかに違反していることが判明し、広域機関がリンク削除の申し入れをした場合は必ずこれに従ってください。</span>
+                 <div class="col-md-12 text-center mt-md-0 mt-2 bottom-act">
+                 		<input type="checkbox" class="form-check-input" id="agreed" onclick="changeCheckbox(this)" >同意します<input type="hidden" name="agreed" value=""/>
+                 		<button type="submit" class="btn kykyb-button px-5 hks-upd-btn" id="next">進む　></button>
+                 </div>
+                 </form>
+    		</div>
+    	</div>
+    </div>
+    
+    
+
+	
+    <div id="dlg-confirm" class="modal">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title">登録実施確認</h5>
+				</div>
+				<div class="modal-body">
+				</div>
+				<div class="modal-footer">
+					<button class="btn btn-primary kykyb-button kykyb-button-dlg" id="dlg-btn-confirm">はい</button>
+					<button class="btn btn-secondary kykyb-button-dlg" id="dlg-btn-cancel">いいえ</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+    
+    <script src="/hks-web-public/lib/jquery/jquery-3.6.0.min.js"></script>
+    <script src="/hks-web-public/lib/jquery-ui/jquery-ui.min.js"></script>
+    <script src="/hks-web-public/lib/jquery-ui/datepicker-ja.js"></script>
+    <script src="/hks-web-public/lib/jquery-ui/jquery.ui.monthpicker.js"></script>
+    <script src="/hks-web-public/lib/d3/d3.min.js"></script>
+    <script src="/hks-web-public/assets/js/monthpicker.js"></script>
+    
+    <script src="/hks-web-public/lib/bootstrap/js/bootstrap.bundle.min.js"></script>
+    
+    <script src="/hks-web-public/assets/js/base.js"></script>
+    
+    
+    <script>
+	    var hksWeb = {};
+	    hksWeb.contextPath = "\/hks-web-public\/";
+	    hksWeb.messages = {
+			"HKS10001C":"\u65B0\u898F\u767B\u9332\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10002C":"\u66F4\u65B0\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10003C":"\u524A\u9664\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10004C":"\u65E2\u306B\u524A\u9664\u3055\u308C\u3066\u3044\u308B\u30E6\u30FC\u30B6\u3067\u3059\u3002\u5229\u7528\u53EF\u80FD\u306A\u30E6\u30FC\u30B6\u3068\u3057\u3066\u6709\u52B9\u306B\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10005C":"\u30C7\u30FC\u30BF\u306E\u53D6\u308A\u8FBC\u307F\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10006C":"\u30C7\u30FC\u30BF\u3092\u518D\u53D6\u5F97\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10007C":"\u767B\u9332\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F",
+			"HKS10008C":"\u767B\u9332\u3092\u5B9F\u65BD\u3057\u307E\u3059\u304B\uFF1F\r\n(\u5404\u30B3\u30DE\u306E\u767A\u96FB\u5B9F\u7E3E\u3092\u7DE8\u96C6\u3057\u305F\u5834\u5408\u306F\u300C\u65E5\u91CF\u300D\u3082\u7DE8\u96C6\u6E08\u307F\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002)",
+		};
+		
+		var WaitDialog = {
+				   show: function() {
+				      $('#FreezePane').removeClass('FreezePaneOff').addClass('FreezePaneOn');
+				   },
+
+				   hide: function() {
+				      $('#FreezePane').removeClass('FreezePaneOn').addClass('FreezePaneOff');
+				   }
+				};
+	    
+	    $(function(){
+		
+	    });
+
+    </script>
+    
+	
+	<script src="/hks-web-public/assets/js/HKSHS004.js"></script>
+
+    
+</body>
+</html>

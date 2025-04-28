@@ -158,7 +158,7 @@ class DuckDBConnection:
 
         if df.empty:
             print(f"[WARNING] 保存対象のDataFrameが空です。Table={table_name}")
-            return 0
+        return 0
             
         # ★ master_key の存在チェック (重複チェックする場合)
         if check_duplicate_master_key and 'master_key' not in df.columns:

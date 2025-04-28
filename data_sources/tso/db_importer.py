@@ -89,7 +89,7 @@ class TSODataImporter:
             
             # スキーマファイルを使用してテーブルを作成
             self._ensure_tables()
-            
+        
             # テーブルの存在を確認
             self._check_area_tables()
             
@@ -245,8 +245,8 @@ class TSODataImporter:
                         total_inserted += estimated_rows
                         continue
                     else:
-                        logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
-                        continue
+                    logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
+                    continue
                 
                 logger.info(f"データインポート処理: {tso_id}, {target_date}, データサイズ {df.shape}")
                 
@@ -311,7 +311,7 @@ class TSODataImporter:
                     elif not df.empty and 'slot' in df.columns:
                         # 既に数値形式かもしれない場合、astype で試す
                         try:
-                           df['slot'] = df['slot'].astype(int)
+                        df['slot'] = df['slot'].astype(int)
                         except ValueError:
                             logger.warning(f"スロット列を整数に変換できませんでした。無効な値が含まれている可能性があります。{df['slot'].unique()[:10]}")
                             # エラーになった場合はNaNにして後でフィルタリング
@@ -328,7 +328,7 @@ class TSODataImporter:
                     print(f"[DEBUG] スロットの一意値: {df['slot'].unique().tolist()[:10] if 'slot' in df.columns and not df.empty else 'N/A'}")
                     # ここで continue するか検討 (スロットがないと master_key が作れない)
                     logger.warning("スロット変換エラーのため、このデータフレームの処理をスキップします。")
-                    continue 
+                            continue
                 
                 # 日付フォーマットをチェック
                 try:
@@ -339,27 +339,27 @@ class TSODataImporter:
                         if first_date_val is not None and isinstance(first_date_val, str):
                             # if df['date'].dtype == 'object': # dtype チェックは必ずしも正確でないことがある
                             print(f"[DEBUG] 日付のフォーマット変換: {first_date_val} → ", end="")
-                            # 文字列から日付に変換
+                                # 文字列から日付に変換
                             df['date'] = pd.to_datetime(df['date'], errors='coerce') # errors='coerce'を追加
                             # 不正な日付は NaT になるので除外
                             df = df.dropna(subset=['date'])
                             if df.empty:
                                 logger.warning("日付変換後にデータがなくなりました。")
                                 continue
-                            
-                            # 未来の年を持つ日付を現在の年に修正
-                            current_year = datetime.now().year
-                            future_dates_mask = df['date'].dt.year > current_year
-                            if future_dates_mask.any():
-                                # 未来の日付があれば、年だけ現在の年に置き換え
+                                
+                                # 未来の年を持つ日付を現在の年に修正
+                                current_year = datetime.now().year
+                                future_dates_mask = df['date'].dt.year > current_year
+                                if future_dates_mask.any():
+                                    # 未来の日付があれば、年だけ現在の年に置き換え
                                 logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
-                                future_dates = df.loc[future_dates_mask, 'date']
-                                df.loc[future_dates_mask, 'date'] = future_dates.apply(
-                                    lambda x: x.replace(year=current_year)
-                                )
-                            
-                                # 文字列形式に戻す - ISO形式に変更
-                                df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                                    future_dates = df.loc[future_dates_mask, 'date']
+                                    df.loc[future_dates_mask, 'date'] = future_dates.apply(
+                                        lambda x: x.replace(year=current_year)
+                                    )
+                                
+                                    # 文字列形式に戻す - ISO形式に変更
+                                    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
                                 print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
                             else:
                                 # 未来日がなくても文字列形式に戻す
@@ -489,10 +489,10 @@ class TSODataImporter:
                         db_connection=self.connection,  # db → connection に変更
                         url_type=url_type
                     )
-                        
+                    
                     # データのダウンロード
                     data = downloader.download_files(start_date, end_date)
-                        
+                    
                     # ダウンロードしたデータをインポート
                     if data is not None and len(data) > 0:
                         # 結果をインポート

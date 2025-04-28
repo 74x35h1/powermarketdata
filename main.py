@@ -31,6 +31,7 @@ try:
     from data_sources.tso.db_importer import TSODataImporter
     from db.duckdb_connection import DuckDBConnection
     from data_sources.jepx.jepx_da_price import JEPXDAPriceDownloader
+    from data_sources.occto.db_importer import OCCTODataImporter
 except ImportError as e:
     logger.error(f"モジュールのインポートエラー: {e}")
     logger.info("プロジェクトのルートディレクトリを Python パスに追加します")
@@ -40,6 +41,7 @@ except ImportError as e:
     from data_sources.tso.db_importer import TSODataImporter
     from db.duckdb_connection import DuckDBConnection
     from data_sources.jepx.jepx_da_price import JEPXDAPriceDownloader
+    from data_sources.occto.db_importer import OCCTODataImporter
 
 class PowerMarketPortal:
     """電力市場データポータルのメインクラス"""
@@ -120,6 +122,34 @@ class PowerMarketPortal:
             
         logger.info(f"{rows}行のJEPXスポット価格データを保存しました")
         return rows
+    
+    def download_occto_plant_data(self, start_date: date, end_date: date) -> int:
+        """
+        OCCTO発電所運転実績データをダウンロードしてデータベースに保存
+        
+        Args:
+            start_date: 開始日
+            end_date: 終了日
+            
+        Returns:
+            インポートされた行数
+        """
+        logger.info(f"OCCTO発電所運転実績データのダウンロード ({start_date}～{end_date})")
+        
+        try:
+            with OCCTODataImporter(db_path=self.db_path) as importer:
+                imported_rows = importer.import_plant_operation_data(
+                    start_date=start_date,
+                    end_date=end_date,
+                    save_to_db=True
+                )
+            
+            logger.info(f"{imported_rows}行のOCCTO発電所運転実績データを保存しました")
+            return imported_rows
+        except Exception as e:
+            logger.error(f"OCCTO発電所運転実績データのダウンロード中にエラーが発生: {e}")
+            print(f"[ERROR] OCCTO発電所運転実績データのダウンロード中にエラーが発生: {e}")
+            return 0
     
     def interactive_menu(self):
         """インタラクティブメニューを表示"""

@@ -203,7 +203,37 @@ class Menu:
 
     def _download_occto_plant(self):
         print("[Starting retrieval of Power Plant Operation Data from OCCTO...]")
-        # TODO: Implement OCCTO power plant operation data retrieval
+        
+        # Import the downloader directly
+        from data_sources.occto.occto_downloader import OCCTODownloader
+        
+        # Get month range from user but only use the start date (since we're downloading month by month)
+        start_date, _ = self._get_month_range()
+        
+        try:
+            # Create a target date that's the 1st day of the month
+            target_date = date(start_date.year, start_date.month, 1)
+            
+            print(f"\nDownloading OCCTO power plant operation data for {target_date.strftime('%Y-%m')}...")
+            
+            # Ask for number of rows to display
+            try:
+                max_rows_input = input("Enter number of rows to display (default: 10): ").strip()
+                max_rows = int(max_rows_input) if max_rows_input else 10
+            except ValueError:
+                max_rows = 10
+                print("Invalid input. Using default value of 10 rows.")
+            
+            # Use the downloader directly without saving to DB
+            with OCCTODownloader() as downloader:
+                downloader.download_plant_operation_data(
+                    target_date=target_date,
+                    max_rows=max_rows,
+                    save_to_temp=True
+                )
+                
+        except Exception as e:
+            print(f"Error downloading OCCTO power plant operation data: {str(e)}")
 
     def _download_occto_interconnection(self):
         print("[Starting retrieval of Interconnection Forecast Data from OCCTO...]")
