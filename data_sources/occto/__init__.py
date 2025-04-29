@@ -6,4 +6,5 @@ from OCCTO (Organization for Cross-regional Coordination of Transmission Operato
 """
 
 from data_sources.occto.occto_downloader import OCCTODownloader
-from data_sources.occto.db_importer import OCCTODataImporter 
+# from data_sources.occto.db_importer import OCCTODataImporter # Removed old import
+from data_sources.occto.db_importer import OCCTO30MinDBImporter # Added correct class 

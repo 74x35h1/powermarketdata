@@ -320,4 +320,25 @@ CREATE TABLE IF NOT EXISTS tso_area_9_data (
     interconnection DOUBLE,
     other DOUBLE,
     total DOUBLE
+);
+
+-- OCCTO 30-minute Generation Data
+CREATE TABLE IF NOT EXISTS occto_30min_generation (
+    master_key TEXT PRIMARY KEY, -- Combined key: YYYYMMDD_plantcode_unitnum
+    date TEXT NOT NULL,          -- YYYYMMDD format
+    plant_code TEXT NOT NULL,
+    unit_num TEXT NOT NULL,
+    area_code INTEGER,
+    plant_name TEXT,
+    gen_method TEXT,
+    slot1 INTEGER, slot2 INTEGER, slot3 INTEGER, slot4 INTEGER, slot5 INTEGER, slot6 INTEGER,
+    slot7 INTEGER, slot8 INTEGER, slot9 INTEGER, slot10 INTEGER, slot11 INTEGER, slot12 INTEGER,
+    slot13 INTEGER, slot14 INTEGER, slot15 INTEGER, slot16 INTEGER, slot17 INTEGER, slot18 INTEGER,
+    slot19 INTEGER, slot20 INTEGER, slot21 INTEGER, slot22 INTEGER, slot23 INTEGER, slot24 INTEGER,
+    slot25 INTEGER, slot26 INTEGER, slot27 INTEGER, slot28 INTEGER, slot29 INTEGER, slot30 INTEGER,
+    slot31 INTEGER, slot32 INTEGER, slot33 INTEGER, slot34 INTEGER, slot35 INTEGER, slot36 INTEGER,
+    slot37 INTEGER, slot38 INTEGER, slot39 INTEGER, slot40 INTEGER, slot41 INTEGER, slot42 INTEGER,
+    slot43 INTEGER, slot44 INTEGER, slot45 INTEGER, slot46 INTEGER, slot47 INTEGER, slot48 INTEGER,
+    total INTEGER
+    -- PRIMARY KEY (date, plant_code, unit_num) -- Replaced by master_key
 ); 

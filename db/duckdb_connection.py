@@ -115,6 +115,27 @@ class DuckDBConnection:
         """Check if database connection is currently open."""
         return self._connection is not None
 
+    def register(self, view_name: str, df: pd.DataFrame):
+        """Register a Pandas DataFrame as a view in DuckDB."""
+        self._ensure_connection()
+        try:
+            self._connection.register(view_name, df)
+            print(f"[DEBUG] Registered DataFrame as view: {view_name}")
+        except Exception as e:
+            print(f"[ERROR] Failed to register view {view_name}: {e}")
+            raise
+            
+    def drop_view(self, view_name: str):
+        """Drop a view if it exists."""
+        self._ensure_connection()
+        try:
+            # Use execute_query to handle potential errors gracefully
+            self.execute_query(f"DROP VIEW IF EXISTS {view_name}", commit=True)
+            print(f"[DEBUG] Dropped view if exists: {view_name}")
+        except Exception as e:
+            # Log error but don't raise, as dropping is cleanup
+            print(f"[WARN] Failed to drop view {view_name}: {e}")
+
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #

@@ -2,7 +2,8 @@
 import sys
 import time
 import os
-from typing import Dict, Callable
+import subprocess # Import subprocess module
+from typing import Dict, Callable, Optional
 from datetime import date, datetime, timedelta
 from calendar import monthrange
 
@@ -78,40 +79,19 @@ class Menu:
         print("16.  ICE USD/JPY Futures Price Data")
         print("q. Quit")
 
-    def _get_month_range(self):
-        """ユーザーに月範囲を入力してもらう（YYYY-MM形式）"""
-        today = date.today()
-        
-        # デフォルト値を現在の月ではなく、前月に設定
-        if today.month == 1:
-            default_year = today.year - 1
-            default_month = 12
-        else:
-            default_year = today.year
-            default_month = today.month - 1
-            
-        try:
-            start_input = input(f"Enter start month (YYYY-MM) [default: {default_year}-{default_month:02d}]: ").strip()
-            if not start_input:
-                start_year, start_month = default_year, default_month
-            else:
-                start_year, start_month = map(int, start_input.split('-'))
-            end_input = input(f"Enter end month (YYYY-MM) [default: {default_year}-{default_month:02d}]: ").strip()
-            if not end_input:
-                end_year, end_month = default_year, default_month
-            else:
-                end_year, end_month = map(int, end_input.split('-'))
-            # 月初・月末を自動計算
-            start_date = date(start_year, start_month, 1)
-            end_last_day = monthrange(end_year, end_month)[1]
-            end_date = date(end_year, end_month, end_last_day)
-            if end_date < start_date:
-                print("End month must be after start month. Using default values.")
-                return date(default_year, default_month, 1), date(default_year, default_month, monthrange(default_year, default_month)[1])
-            return start_date, end_date
-        except Exception:
-            print("Invalid month format. Using default values.")
-            return date(default_year, default_month, 1), date(default_year, default_month, monthrange(default_year, default_month)[1])
+    def _get_date_input(self, prompt: str, default_date: date) -> Optional[date]:
+        """Prompts the user for a date in YYYY-MM-DD format and validates it."""
+        while True:
+            try:
+                date_str = input(f"{prompt} (YYYY-MM-DD) [default: {default_date.strftime('%Y-%m-%d')}]: ").strip()
+                if not date_str:
+                    return default_date
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                print("Invalid date format. Please use YYYY-MM-DD.")
+            except Exception as e:
+                 print(f"An error occurred: {e}")
+                 return None # Indicate error
 
     def _display_tso_choices(self):
         """TSO選択用の番号付きリストを表示します"""
@@ -202,38 +182,64 @@ class Menu:
         # TODO: Implement HJKS Data retrieval
 
     def _download_occto_plant(self):
-        print("[Starting retrieval of Power Plant Operation Data from OCCTO...]")
+        print("\n[Starting OCCTO 30-min Generation Data Download and DB Import...]")
         
-        # Import the downloader directly
-        from data_sources.occto.occto_downloader import OCCTODownloader
+        # Get start and end dates from user
+        today = date.today()
+        default_start_date = today - timedelta(days=7)
+        default_end_date = today - timedelta(days=1)
+
+        start_date = self._get_date_input("Enter start date", default_start_date)
+        if start_date is None: return # Error occurred
         
-        # Get month range from user but only use the start date (since we're downloading month by month)
-        start_date, _ = self._get_month_range()
-        
+        end_date = self._get_date_input("Enter end date", default_end_date)
+        if end_date is None: return # Error occurred
+
+        if end_date < start_date:
+            print("End date cannot be earlier than start date. Aborting.")
+            return
+
+        # Prepare the command to run the script as a module
+        command = [
+            sys.executable, # Use the current Python interpreter
+            "-m", "data_sources.occto.30min_gendata_downloader", # Run as a module
+            "--start-date", start_date.strftime('%Y-%m-%d'),
+            "--end-date", end_date.strftime('%Y-%m-%d')
+            # Add --db-path if you want to specify it here, otherwise it uses the default
+            # "--db-path", "path/to/your.db"
+        ]
+
+        print(f"\nExecuting command: {' '.join(command)}")
+
         try:
-            # Create a target date that's the 1st day of the month
-            target_date = date(start_date.year, start_date.month, 1)
-            
-            print(f"\nDownloading OCCTO power plant operation data for {target_date.strftime('%Y-%m')}...")
-            
-            # Ask for number of rows to display
-            try:
-                max_rows_input = input("Enter number of rows to display (default: 10): ").strip()
-                max_rows = int(max_rows_input) if max_rows_input else 10
-            except ValueError:
-                max_rows = 10
-                print("Invalid input. Using default value of 10 rows.")
-            
-            # Use the downloader directly without saving to DB
-            with OCCTODownloader() as downloader:
-                downloader.download_plant_operation_data(
-                    target_date=target_date,
-                    max_rows=max_rows,
-                    save_to_temp=True
-                )
-                
+            # Run the script as a subprocess, ensuring the CWD is the project root
+            result = subprocess.run(
+                command, 
+                capture_output=True, 
+                text=True, 
+                check=True,
+                cwd=project_root # Set the current working directory to the project root
+            )
+            print("--- Script Output Start ---")
+            print(result.stdout)
+            if result.stderr:
+                 print("--- Script Error Output Start ---")
+                 print(result.stderr)
+                 print("--- Script Error Output End ---")
+            print("--- Script Output End ---")
+            print("\n[OCCTO 30-min data download and import process completed successfully.]")
+
+        except FileNotFoundError:
+            print(f"[ERROR] Python interpreter not found or script path incorrect: {sys.executable}")
+        except subprocess.CalledProcessError as e:
+            print(f"[ERROR] Script execution failed with exit code {e.returncode}.")
+            print("--- Script Output Start ---")
+            print(e.stdout)
+            print("--- Script Error Output Start ---")
+            print(e.stderr)
+            print("--- Script Error Output End ---")
         except Exception as e:
-            print(f"Error downloading OCCTO power plant operation data: {str(e)}")
+            print(f"An unexpected error occurred while running the script: {e}")
 
     def _download_occto_interconnection(self):
         print("[Starting retrieval of Interconnection Forecast Data from OCCTO...]")

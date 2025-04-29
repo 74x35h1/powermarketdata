@@ -245,8 +245,8 @@ class TSODataImporter:
                         total_inserted += estimated_rows
                         continue
                     else:
-                    logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
-                    continue
+                        logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
+                        continue
                 
                 logger.info(f"データインポート処理: {tso_id}, {target_date}, データサイズ {df.shape}")
                 
@@ -311,7 +311,7 @@ class TSODataImporter:
                     elif not df.empty and 'slot' in df.columns:
                         # 既に数値形式かもしれない場合、astype で試す
                         try:
-                        df['slot'] = df['slot'].astype(int)
+                            df['slot'] = df['slot'].astype(int)
                         except ValueError:
                             logger.warning(f"スロット列を整数に変換できませんでした。無効な値が含まれている可能性があります。{df['slot'].unique()[:10]}")
                             # エラーになった場合はNaNにして後でフィルタリング
@@ -328,7 +328,7 @@ class TSODataImporter:
                     print(f"[DEBUG] スロットの一意値: {df['slot'].unique().tolist()[:10] if 'slot' in df.columns and not df.empty else 'N/A'}")
                     # ここで continue するか検討 (スロットがないと master_key が作れない)
                     logger.warning("スロット変換エラーのため、このデータフレームの処理をスキップします。")
-                            continue
+                    continue
                 
                 # 日付フォーマットをチェック
                 try:
@@ -352,7 +352,7 @@ class TSODataImporter:
                                 future_dates_mask = df['date'].dt.year > current_year
                                 if future_dates_mask.any():
                                     # 未来の日付があれば、年だけ現在の年に置き換え
-                                logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
+                                    logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
                                     future_dates = df.loc[future_dates_mask, 'date']
                                     df.loc[future_dates_mask, 'date'] = future_dates.apply(
                                         lambda x: x.replace(year=current_year)

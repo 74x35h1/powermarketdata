@@ -15,8 +15,9 @@ import random
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
-from bs4 import BeautifulSoup
 import json
+# Import the new DB importer class
+from data_sources.occto.db_importer import OCCTO30MinDBImporter
 
 # Configure logging
 logging.basicConfig(
@@ -111,23 +112,19 @@ class OCCTOStandaloneDownloader:
              print(f"Error parsing agreement page HTML or other unexpected error: {e}")
              return False
 
-    def download_plant_operation_data(self, start_date: date, end_date: date, max_rows=10, save_to_temp=True):
+    def download_plant_operation_data(self, start_date: date, end_date: date):
         """
-        Download and display power plant operation data for the specified date range.
-        This now involves a two-step process:
-        1. POST to the search endpoint to get JSON.
-        2. GET the CSV download link (if provided in JSON, or assume previous URL for now).
+        Downloads power plant operation data as JSON for the specified date range.
+        Returns the parsed JSON response on success, None otherwise.
 
         Args:
             start_date: Start date for the data (inclusive)
             end_date: End date for the data (inclusive)
-            max_rows: Maximum number of rows to display
-            save_to_temp: Whether to save the downloaded file to temp directory
         """
         # Ensure agreement is confirmed first
         if not self.agreement_confirmed and not self.confirm_agreement():
             print("Failed to confirm agreement. Cannot proceed with download.")
-            return
+            return None # Return None on failure
 
         # Format dates for the search POST and download GET
         start_date_str_post = start_date.strftime("%Y/%m/%d")
@@ -181,7 +178,7 @@ class OCCTOStandaloneDownloader:
             if 'application/json' not in search_content_type:
                 print(f"[ERROR] Expected JSON response from search, but got {search_content_type}.")
                 print(f"[DEBUG] Search Response Content (first 500 bytes): {response_search.content[:500]}")
-                return None
+                return None # Return None on failure
 
             # Parse the JSON response
             search_json_response = response_search.json()
@@ -202,16 +199,23 @@ class OCCTOStandaloneDownloader:
             # No separate download step is needed.
 
             # Generate filename for saving (moved here from removed block)
-            if save_to_temp:
-                start_date_filename = start_date_str_get
-                end_date_filename = end_date_str_get
-                filename = f"occto_plant_{start_date_filename}_to_{end_date_filename}.csv"
-                save_path = os.path.join(self.temp_dir, filename)
-            else:
-                save_path = None
+            # Commenting out the unused save_to_temp logic
+            # if save_to_temp:
+            #     start_date_filename = start_date_str_get
+            #     end_date_filename = end_date_str_get
+            #     filename = f"occto_plant_{start_date_filename}_to_{end_date_filename}.csv"
+            #     save_path = os.path.join(self.temp_dir, filename)
+            # else:
+            #     save_path = None
+            save_path = None # Explicitly set save_path to None as saving is not used
 
             # Process and display the data directly from the JSON response
-            self.process_and_display_data(search_json_response, start_date_str_post, end_date_str_post, max_rows, save_path)
+            # self.process_and_display_data(search_json_response, start_date_str_post, end_date_str_post, max_rows, save_path)
+            # The process_and_display_data function is no longer called here.
+            # Data processing happens in main() after this function returns.
+
+            # Return the parsed JSON data instead of processing/displaying here
+            return search_json_response
 
         except requests.RequestException as e:
             # Handle errors for search POST
@@ -219,12 +223,12 @@ class OCCTOStandaloneDownloader:
             if hasattr(e, 'response') and e.response is not None:
                 print(f"Response status: {e.response.status_code}")
                 print(f"Response text (first 500 bytes): {e.response.text[:500]}")
-            return None
+            return None # Return None on failure
         except Exception as e:
              print(f"An unexpected error occurred: {e}")
              import traceback
              traceback.print_exc() # Print full traceback for unexpected errors
-             return None
+             return None # Return None on failure
 
     def process_and_display_data(self, json_data, start_date_str, end_date_str, max_rows=10, save_path=None):
         """
@@ -282,8 +286,39 @@ class OCCTOStandaloneDownloader:
             import traceback
             traceback.print_exc()
 
+    def _process_json_to_dataframe(self, json_data):
+        """
+        Process the JSON data from the /search endpoint into a Pandas DataFrame.
+
+        Args:
+            json_data (dict): The JSON response from the /search endpoint.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing the raw data from JSON, or empty if error.
+        """
+        try:
+            if not json_data or 'data' not in json_data or 'items' not in json_data['data']:
+                logger.error("[ERROR] JSON response is missing expected 'data.items' structure.")
+                return pd.DataFrame()
+
+            items = json_data['data']['items']
+            if not items:
+                logger.info("[INFO] No data items found in the JSON response.")
+                return pd.DataFrame()
+
+            # Convert list of dictionaries to DataFrame
+            df = pd.DataFrame(items)
+            logger.info(f"[INFO] Successfully parsed {len(df)} records from JSON response into DataFrame.")
+            return df
+
+        except Exception as e:
+            logger.error(f"Error processing JSON data to DataFrame: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame() # Return empty DataFrame on error
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Download and display OCCTO plant operation data")
+    parser = argparse.ArgumentParser(description="Download OCCTO 30-min generation data and import to DB") # Updated description
     parser.add_argument(
         "--start-date", 
         type=lambda s: datetime.strptime(s, '%Y-%m-%d').date(),
@@ -297,10 +332,10 @@ def parse_args():
         default=None
     )
     parser.add_argument(
-        "--rows",
-        type=int,
-        default=10,
-        help="Number of rows to display (default: 10)"
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to the SQLite database file (defaults to ./power_market_data.db)"
     )
     return parser.parse_args()
 
@@ -310,14 +345,48 @@ def main():
     # If end_date is not specified, use the start_date
     end_date = args.end_date if args.end_date else args.start_date
     
-    # Create downloader and download data
-    downloader = OCCTOStandaloneDownloader()
-    downloader.download_plant_operation_data(
+    logger.info(f"Starting OCCTO data download for {args.start_date} to {end_date}...")
+
+    # Create downloader instance
+    downloader = OCCTOStandaloneDownloader() # Class name might still be Standalone
+    
+    # Get raw JSON data
+    json_data = downloader.download_plant_operation_data(
         start_date=args.start_date,
         end_date=end_date,
-        max_rows=args.rows,
-        save_to_temp=True
-    )
+        # Removed max_rows and save_to_temp arguments as they are no longer used here
+    ) # This method needs to be modified to return the JSON or DataFrame
+
+    if not json_data:
+         logger.error("Failed to download data. Exiting.")
+         return
+
+    # Process JSON to DataFrame (using the new internal method)
+    raw_df = downloader._process_json_to_dataframe(json_data)
+
+    if raw_df.empty:
+        logger.warning("No data obtained after processing JSON. Exiting.")
+        return
+        
+    logger.info("Data download and initial processing complete.")
+    logger.info("Initializing database importer...")
+
+    # Import data into database
+    try:
+        importer = OCCTO30MinDBImporter(db_path=args.db_path)
+        transformed_df = importer.transform_occto_data(raw_df)
+        
+        if not transformed_df.empty:
+            logger.info("Inserting data into the database...")
+            importer.insert_occto_data(transformed_df)
+            logger.info("Database import process finished.")
+        else:
+             logger.warning("Data transformation resulted in an empty DataFrame. Nothing inserted.")
+
+    except Exception as e:
+        logger.error(f"An error occurred during database import: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main() 
