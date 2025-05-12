@@ -57,12 +57,17 @@ CREATE TABLE IF NOT EXISTS jepx_bid_curves (
 
 -- Weather Data
 CREATE TABLE IF NOT EXISTS jma_weather (
-    date DATE,
-    hour INTEGER,
-    station_id VARCHAR(10),
+    station_id VARCHAR(10) NOT NULL,
+    datetime TIMESTAMP NOT NULL,
+    interval VARCHAR(10) NOT NULL,
     temperature DECIMAL(5,2),
     precipitation DECIMAL(5,2),
-    PRIMARY KEY (date, hour, station_id)
+    sunshine_duration DECIMAL(5,2),
+    wind_speed DECIMAL(5,2),
+    wind_direction VARCHAR(10),
+    wind_direction_sin REAL,
+    wind_direction_cos REAL,
+    PRIMARY KEY (station_id, datetime, interval)
 );
 
 -- エリア情報テーブル

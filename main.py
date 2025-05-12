@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-2
 """
 電力市場データポータル
 
@@ -31,6 +31,7 @@ try:
     from data_sources.tso.db_importer import TSODataImporter
     from db.duckdb_connection import DuckDBConnection
     from data_sources.jepx.jepx_da_price import JEPXDAPriceDownloader
+    from data_sources.jepx.jepx_bid import JEPXBidDownloader
 except ImportError as e:
     logger.error(f"モジュールのインポートエラー: {e}")
     logger.info("プロジェクトのルートディレクトリを Python パスに追加します")
@@ -40,6 +41,7 @@ except ImportError as e:
     from data_sources.tso.db_importer import TSODataImporter
     from db.duckdb_connection import DuckDBConnection
     from data_sources.jepx.jepx_da_price import JEPXDAPriceDownloader
+    from data_sources.jepx.jepx_bid import JEPXBidDownloader
 
 class PowerMarketPortal:
     """電力市場データポータルのメインクラス"""
@@ -114,13 +116,51 @@ class PowerMarketPortal:
             インポートされた行数
         """
         logger.info("JEPXスポット価格データのダウンロード")
+        logger.debug(f"[main.py download_jepx_price] received url: {url}")
         
         with JEPXDAPriceDownloader() as downloader:
-            rows = downloader.fetch_and_store(url)
+            if url is None:
+                logger.debug("[main.py download_jepx_price] calling fetch_and_store without url argument")
+                rows = downloader.fetch_and_store()
+            else:
+                logger.debug(f"[main.py download_jepx_price] calling fetch_and_store with url: {url}")
+                rows = downloader.fetch_and_store(url)
             
         logger.info(f"{rows}行のJEPXスポット価格データを保存しました")
         return rows
     
+    def download_jepx_bid_data(self):
+        """
+        JEPX 入札データをダウンロードしてデータベースに保存 (日付入力あり)
+        """
+        logger.info("JEPX入札データのダウンロード開始")
+        print("\n--- JEPX Bid Data Download ---")
+        
+        start_date_str = input("Enter start date (YYYY-MM-DD): ")
+        end_date_str = input("Enter end date (YYYY-MM-DD): ")
+        
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            logger.error("日付の形式が不正です。YYYY-MM-DD 形式で入力してください。")
+            print("Error: Dates must be in YYYY-MM-DD format.")
+            return
+        
+        if start_date > end_date:
+            logger.error("開始日が終了日より後になっています。")
+            print("Error: Start date cannot be after end date.")
+            return
+
+        try:
+            with JEPXBidDownloader(db_path=self.db_path) as downloader:
+                downloader.download_and_save(start_date, end_date)
+            logger.info(f"JEPX入札データのダウンロードと保存が完了しました ({start_date_str} から {end_date_str})。")
+            print("Download and database insertion completed.")
+        except Exception as e:
+            logger.error(f"JEPX入札データの処理中にエラーが発生しました: {e}", exc_info=True)
+            print(f"An error occurred during JEPX bid data processing: {e}")
+
     def interactive_menu(self):
         """インタラクティブメニューを表示"""
         # メニュークラスは内部で独自のPowerMarketPortalを生成するため、

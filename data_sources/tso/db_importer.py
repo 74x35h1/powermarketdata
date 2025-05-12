@@ -48,32 +48,13 @@ class TSODataImporter:
     
     def __init__(self, db_path: str = None, read_only: bool = False):
         """
-        TSO（送電系統運用者）データインポーターを初期化します。
-        
-        Args:
-            db_path: DuckDBデータベースファイルのパス
-            read_only: 読み取り専用モードでデータベースに接続するかどうか
+        TSOデータインポーターの初期化
         """
         try:
-            # DuckDBへの接続を作成
-            self.connection = DuckDBConnection(db_path, read_only=read_only)
-            logger.info(f"DuckDB接続を正常に作成しました: {self.connection.db_path}")
+            # データベース接続の初期化
+            self.connection = DuckDBConnection(db_path, read_only)
             
-            # TSO IDとエリアコードのマッピング
-            self.tso_id_to_area = {
-                "hokkaido": 1,
-                "tohoku": 2,
-                "tepco": 3,
-                "chubu": 4,
-                "hokuriku": 5,
-                "kansai": 6,
-                "chugoku": 7,
-                "shikoku": 8,
-                "kyushu": 9,
-                "okinawa": 10
-            }
-            
-            # 各エリアのテーブル名マッピング (インデント修正)
+            # エリア別テーブル名の定義
             self.area_tables = {
                     1: "tso_area_1_data",
                     2: "tso_area_2_data",
@@ -88,7 +69,7 @@ class TSODataImporter:
             }
             
             # スキーマファイルを使用してテーブルを作成
-            self._ensure_tables()
+        self._ensure_tables()
         
             # テーブルの存在を確認
             self._check_area_tables()
@@ -245,8 +226,8 @@ class TSODataImporter:
                         total_inserted += estimated_rows
                         continue
                     else:
-                        logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
-                        continue
+                    logger.warning(f"空のデータフレーム: {tso_id}, {target_date}")
+                    continue
                 
                 logger.info(f"データインポート処理: {tso_id}, {target_date}, データサイズ {df.shape}")
                 
@@ -311,7 +292,7 @@ class TSODataImporter:
                     elif not df.empty and 'slot' in df.columns:
                         # 既に数値形式かもしれない場合、astype で試す
                         try:
-                            df['slot'] = df['slot'].astype(int)
+                        df['slot'] = df['slot'].astype(int)
                         except ValueError:
                             logger.warning(f"スロット列を整数に変換できませんでした。無効な値が含まれている可能性があります。{df['slot'].unique()[:10]}")
                             # エラーになった場合はNaNにして後でフィルタリング
@@ -328,7 +309,7 @@ class TSODataImporter:
                     print(f"[DEBUG] スロットの一意値: {df['slot'].unique().tolist()[:10] if 'slot' in df.columns and not df.empty else 'N/A'}")
                     # ここで continue するか検討 (スロットがないと master_key が作れない)
                     logger.warning("スロット変換エラーのため、このデータフレームの処理をスキップします。")
-                    continue
+                            continue
                 
                 # 日付フォーマットをチェック
                 try:
@@ -352,7 +333,7 @@ class TSODataImporter:
                                 future_dates_mask = df['date'].dt.year > current_year
                                 if future_dates_mask.any():
                                     # 未来の日付があれば、年だけ現在の年に置き換え
-                                    logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
+                                logger.info(f"[INFO] 未来の日付({df['date'][future_dates_mask].dt.year.iloc[0]}年)を{current_year}年に修正します")
                                     future_dates = df.loc[future_dates_mask, 'date']
                                     df.loc[future_dates_mask, 'date'] = future_dates.apply(
                                         lambda x: x.replace(year=current_year)
@@ -360,14 +341,10 @@ class TSODataImporter:
                                 
                                     # 文字列形式に戻す - ISO形式に変更
                                     df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-                                print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
-                            else:
-                                # 未来日がなくても文字列形式に戻す
-                                df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-                                print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
+                            print(f"{df['date'].iloc[0] if not df.empty else 'N/A'}")
                         elif pd.api.types.is_datetime64_any_dtype(df['date']):
-                             # 既に datetime 型なら文字列に変換
-                             df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                            # 既に datetime 型なら文字列に変換
+                            df['date'] = df['date'].dt.strftime('%Y-%m-%d')
 
                 except Exception as e:
                     print(f"[ERROR] 日付フォーマット変換中にエラー: {str(e)}")
@@ -383,7 +360,7 @@ class TSODataImporter:
                     try:
                         area_id = int(tso_id[0])
                     except ValueError:
-                         pass # 数字で始まってもエリアIDでない場合
+                        pass # 数字で始まってもエリアIDでない場合
                 
                 if area_id is None: # 上記で取得できなかった場合
                     # TSO IDをエリア番号にマッピング
@@ -428,16 +405,16 @@ class TSODataImporter:
                         logger.warning(f"データフレームが空です (rows={rows})")
                         print(f"[WARNING] データフレームが空です (rows={rows})")
                 except Exception as e:
-                    logger.error(f"{area_table_name}テーブルへのデータ挿入エラー: {str(e)}")
-                    print(f"[ERROR] {area_table_name}テーブルへのデータ挿入エラー: {str(e)}")
-                    continue # エラーがあっても次のデータの処理に進む
-                               
-            return total_inserted
+                    logger.error(f"データ挿入中にエラーが発生しました: {str(e)}")
+                    print(f"[ERROR] データ挿入中にエラーが発生しました: {str(e)}")
+                                continue
             
         except Exception as e:
-            logger.error(f"データインポート中にエラーが発生: {str(e)}")
-            print(f"[ERROR] データインポート中にエラーが発生: {str(e)}")
-            raise
+            logger.error(f"データインポート処理中にエラーが発生しました: {str(e)}")
+            print(f"[ERROR] データインポート処理中にエラーが発生しました: {str(e)}")
+            raise e
+        
+        return total_inserted
     
     def import_from_downloader(
         self, 
@@ -465,12 +442,12 @@ class TSODataImporter:
         if not tso_ids:
             tso_ids = ["hokkaido", "tohoku", "tepco", "chubu"]
             
-        if not start_date: # インデント修正
+            if not start_date:
             # 当月の1日
             today = date.today()
             start_date = date(today.year, today.month, 1)
             
-        if not end_date: # インデント修正
+            if not end_date:
             end_date = date.today()
             
         logger.info(f"{start_date} から {end_date} までの {', '.join(tso_ids)} データをダウンロード中")
@@ -478,7 +455,6 @@ class TSODataImporter:
         total_inserted = 0
         
         # 各TSO IDに対してダウンロードを実行
-        # try ブロックを追加
         try:
             for tso_id in tso_ids:
                 try:
@@ -499,18 +475,15 @@ class TSODataImporter:
                         inserted = self.import_data([(d, tid, df) for d, tid, df in data]) # 変数名変更 d, tid
                         total_inserted += inserted
                         logger.info(f"TSO {tso_id} から {inserted} 行をインポートしました")
-                    else: # else のインデント修正
+                    else:
                         logger.warning(f"TSO {tso_id} からデータを取得できませんでした")
                 
                 except Exception as e:
                     logger.error(f"TSO {tso_id} の処理中にエラー: {str(e)}")
                     # TSOごとのエラーはログに残し、次のTSOへ進む
-                    continue 
+                        continue
         finally:
-            # データベース接続をクローズ（共有接続を使用している場合はコメントアウト）
-            # このメソッド内で閉じるべきか、呼び出し元で閉じるべきか検討。
-            # ここでは閉じないでおく (with構文で Importer が使われる想定)
-            # logger.info("TSOデータのダウンロード/インポート処理完了 (DB接続は維持)") # 紛らわしいので変更
+            # この finally は for ループの外側の try に対応するべき
             logger.info(f"TSOデータインポート処理メソッド import_from_downloader 完了 (tso_ids: {tso_ids})")
             
         return total_inserted

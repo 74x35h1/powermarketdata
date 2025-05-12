@@ -12,6 +12,10 @@ import io
 from decimal import Decimal, InvalidOperation
 import chardet
 from db.duckdb_connection import DuckDBConnection
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 JEPX_DA_PRICE_URL = "https://www.jepx.jp/market/excel/spot_2025.csv"
 
@@ -126,6 +130,10 @@ class JEPXDAPriceDownloader:
                 self.db.execute_query(stmt)
 
     def fetch_and_store(self, url=JEPX_DA_PRICE_URL):
+        logger.debug(f"[JEPXDAPriceDownloader fetch_and_store] received url: {url}")
+        if url is None:
+            logger.error("[JEPXDAPriceDownloader fetch_and_store] URL is None, cannot proceed.")
+            return 0
         response = requests.get(url)
         raw_bytes = response.content
         
@@ -151,7 +159,7 @@ class JEPXDAPriceDownloader:
         
         if not rows:
             print("WARNING: No rows found in CSV")
-            return
+            return 0
             
         # CSVの列インデックスを直接マッピング（JEPXのCSV形式に合わせて）
         # 実際のCSVファイルの順序に基づいて手動でマッピング
@@ -229,56 +237,78 @@ class JEPXDAPriceDownloader:
                 else:
                     print(f"Column {col} has invalid index {idx}")
                 
-        for row in rows[1:]:
-            if not row or len(row) < 2:
-                continue
-            date = str(row[0]).strip() if len(row) > 0 else None
-            slot = str(row[1]).strip() if len(row) > 1 else None
-            if not date or not slot:
-                print(f"SKIP: date or slot is empty. row={row}")
-                continue
-            try:
-                slot_int = int(slot)
-            except Exception:
-                print(f"SKIP: slot is not integer. row={row}")
+        header_row_index = -1
+        for i, row in enumerate(rows):
+            if row and row[0] == '年月日':
+                header_row_index = i
+                break
+        
+        if header_row_index == -1:
+            print("ERROR: Header row with '年月日' not found in CSV.")
+            return 0
+
+        data_rows = rows[header_row_index + 1:]
+        processed_count = 0
+
+        for row_num, row_data in enumerate(data_rows):
+            if not any(row_data):  # 空の行はスキップ
                 continue
                 
-            values = [date, slot_int]
-            for j, col in enumerate(SCHEMA_COLS[2:]):
-                idx = col_idx_map[j+2]
-                val = row[idx] if idx is not None and idx < len(row) else None
-                
-                # デバッグ出力を削減
-                if j < 3 and slot_int <= 3:  # 最初の数カラムを最初の数行だけ表示
-                    print(f"Column {col}: idx={idx}, val={val}")
-                    
-                if col in INT_COLS:
-                    try:
-                        val = int(val.replace(',', '')) if val else None
-                    except Exception:
-                        val = None
-                elif col in DEC_COLS:
-                    try:
-                        val = float(val) if val else None
-                    except Exception:
-                        val = None
-                values.append(val)
+            # valuesの初期化
+            values = [None] * len(SCHEMA_COLS) 
             
-            # デバッグ出力を削減
-            if len(values) > 5 and slot_int <= 3:  # 最初の数行だけ表示
-                print(f"First 5 values: {values[:5]}")
-                
+            temp_data = {}
+            for col_idx, schema_col_name in column_mapping.items():
+                if col_idx < len(row_data):
+                    raw_value = row_data[col_idx]
+                    # SCHEMA_COLSにおける正しいインデックスを見つける
+                    if schema_col_name in SCHEMA_COLS:
+                        target_idx = SCHEMA_COLS.index(schema_col_name)
+                        # 値の変換
+                        if schema_col_name == 'date':
+                            try:
+                                values[target_idx] = datetime.strptime(raw_value, '%Y/%m/%d').strftime('%Y-%m-%d')
+                            except ValueError:
+                                print(f"Warning: Invalid date format '{raw_value}' at row {header_row_index + 1 + row_num}. Skipping row.")
+                                continue # 次の行へ
+                        elif schema_col_name in INT_COLS:
+                    try:
+                                values[target_idx] = int(Decimal(raw_value)) if raw_value else None
+                            except (InvalidOperation, ValueError):
+                                values[target_idx] = None
+                        elif schema_col_name in DEC_COLS:
+                    try:
+                                values[target_idx] = Decimal(raw_value) if raw_value else None
+                            except InvalidOperation:
+                                values[target_idx] = None
+                        else:
+                            values[target_idx] = raw_value
+            
+            # date と slot が None の場合はスキップ (主キーなので必須)
+            date_idx = SCHEMA_COLS.index('date')
+            slot_idx = SCHEMA_COLS.index('slot')
+            if values[date_idx] is None or values[slot_idx] is None:
+                print(f"Warning: date or slot is None at row {header_row_index + 1 + row_num}. Skipping row.")
+                continue
+
+            date_val = values[date_idx]
+            slot_val = values[slot_idx]
+
+            # データベースへの挿入/更新
             select_sql = 'SELECT 1 FROM jepx_da_price WHERE date=? AND slot=?'
-            exists = self.db.execute_query(select_sql, (date, slot_int)).fetchone()
+            exists = self.db.execute_query(select_sql, (date_val, slot_val)).fetchone()
             if exists:
                 set_clause = ','.join([f'{col}=?' for col in SCHEMA_COLS if col not in ['date', 'slot']])
                 update_sql = f'UPDATE jepx_da_price SET {set_clause} WHERE date=? AND slot=?'
-                update_values = [values[i] for i, col in enumerate(SCHEMA_COLS) if col not in ['date', 'slot']] + [date, slot_int]
+                update_values = [values[i] for i, col in enumerate(SCHEMA_COLS) if col not in ['date', 'slot']] + [date_val, slot_val]
                 self.db.execute_query(update_sql, tuple(update_values))
             else:
                 insert_sql = f'INSERT INTO jepx_da_price ({','.join(SCHEMA_COLS)}) VALUES ({','.join(['?' for _ in SCHEMA_COLS])})'
                 self.db.execute_query(insert_sql, tuple(values))
-        print('JEPX day-ahead price data updated.')
+            processed_count += 1
+        
+        print(f'JEPX day-ahead price data processed: {processed_count} rows.')
+        return processed_count
 
 if __name__ == "__main__":
     with JEPXDAPriceDownloader() as downloader:

@@ -174,8 +174,13 @@ class Menu:
             print(f"Error importing JEPX price data: {str(e)}")
 
     def _download_jepx_bid(self):
-        print("[Starting retrieval of JEPX Bid Data...]")
-        # TODO: Implement JEPX Bid Data retrieval
+        print("\n[Starting retrieval of JEPX Bid Data...]")
+        try:
+            # self.portal は main.PowerMarketPortal のインスタンス
+            self.portal.download_jepx_bid_data() # ★ PowerMarketPortalのメソッドを呼び出す
+        except Exception as e:
+            print(f"Error during JEPX Bid Data retrieval: {str(e)}")
+            logger.error(f"Error in _download_jepx_bid: {e}", exc_info=True)
 
     def _download_hjks(self):
         print("[Starting retrieval of HJKS Data...]")
