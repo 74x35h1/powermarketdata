@@ -272,12 +272,12 @@ class JEPXDAPriceDownloader:
                                 print(f"Warning: Invalid date format '{raw_value}' at row {header_row_index + 1 + row_num}. Skipping row.")
                                 continue # 次の行へ
                         elif schema_col_name in INT_COLS:
-                    try:
+                            try:
                                 values[target_idx] = int(Decimal(raw_value)) if raw_value else None
                             except (InvalidOperation, ValueError):
                                 values[target_idx] = None
                         elif schema_col_name in DEC_COLS:
-                    try:
+                            try:
                                 values[target_idx] = Decimal(raw_value) if raw_value else None
                             except InvalidOperation:
                                 values[target_idx] = None

@@ -57,17 +57,21 @@ CREATE TABLE IF NOT EXISTS jepx_bid_curves (
 
 -- Weather Data
 CREATE TABLE IF NOT EXISTS jma_weather (
+    primary_key TEXT PRIMARY KEY,         -- station_id + yyyymmddhhmm (e.g., 47662_202504010100)
     station_id VARCHAR(10) NOT NULL,
-    datetime TIMESTAMP NOT NULL,
-    interval VARCHAR(10) NOT NULL,
+    date TEXT NOT NULL,                   -- YYYY-MM-DD format
+    time TEXT NOT NULL,                   -- HH:MM format
     temperature DECIMAL(5,2),
-    precipitation DECIMAL(5,2),
     sunshine_duration DECIMAL(5,2),
+    global_solar_radiation DECIMAL(5,2),  -- Added this column as per user request
     wind_speed DECIMAL(5,2),
-    wind_direction VARCHAR(10),
     wind_direction_sin REAL,
     wind_direction_cos REAL,
-    PRIMARY KEY (station_id, datetime, interval)
+    weather_description VARCHAR(255),     -- Increased length
+    snowfall_depth DECIMAL(5,2)
+    -- precipitation DECIMAL(5,2), -- This column was in the old schema, but not requested for the new one.
+    -- wind_direction VARCHAR(10), -- Replaced by sin/cos components
+    -- interval VARCHAR(10)      -- Removed as per user request
 );
 
 -- エリア情報テーブル

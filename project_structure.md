@@ -6,242 +6,175 @@
 
 1. 電力会社（TSO）からの需要・供給データのダウンロード
 2. JEPXからの市場価格データの取得
-3. データベースへの保存と分析
+3. OCCTOからの発電実績・需給関連データの取得
+4. JMAからの気象データの取得
+5. データベースへの保存と分析
+6. `.env`ファイルによる設定管理
 
 ## ディレクトリ構成
 
 ```
 powermarketdata/
+├── .env.example                 # 環境変数設定ファイルのサンプル (.envとしてコピーして使用)
 ├── cli/
-│   └── menu.py
+│   └── menu.py                  # メインCLIメニュー
 ├── config/
-│   └── tso_urls.json
+│   └── tso_urls.json            # TSO関連URL設定 (現在は未使用の可能性あり、要確認)
 ├── data_sources/
 │   ├── jepx/
-│   │   └── jepx_da_price.py
+│   │   ├── jepx_da_price.py     # JEPXスポット価格ダウンローダー・DBインポーター
+│   │   └── jepx_bid.py          # JEPX入札情報ダウンローダー・DBインポーター
+│   ├── jma/
+│   │   ├── jma_historical.py    # JMA気象観測履歴データダウンローダー
+│   │   └── db_importer.py       # JMA気象データDBインポーター
+│   ├── occto/
+│   │   ├── 30min_gendata_downloader.py # OCCTO 30分発電実績ダウンローダー (サブプロセスとして実行)
+│   │   └── db_importer.py            # OCCTO 30分発電実績DBインポーター
 │   └── tso/
 │       ├── __init__.py
-│       ├── db_importer.py         # TSOデータDBインポート
-│       ├── downloader.py          # TSOデータダウンロード（補助）
-│       ├── parser.py              # TSOデータパース・標準化
-│       ├── tso_url_templates.py   # TSOごとのURLテンプレート管理
-│       └── unified_downloader.py  # 統合ダウンローダー（全TSO対応）
+│       ├── db_importer.py         # TSOデータDBインポーター
+│       ├── parser.py              # TSOデータパーサー・標準化
+│       ├── tso_url_templates.py   # TSOごとのURLテンプレート (現在は未使用の可能性あり、要確認)
+│       └── unified_downloader.py  # TSOデータ統合ダウンローダー
 ├── db/
-│   ├── duckdb_connection.py
-│   └── schema_definition.sql
+│   ├── duckdb_connection.py     # DuckDB接続管理 (.envのDB_PATH参照)
+│   └── schema_definition.sql    # DBスキーマ定義
+├── docs/                          # (オプション) 詳細ドキュメント用
 ├── examples/
-│   └── import_tso_data_to_db.py
-├── main.py
-├── README.md
-└── project_structure.md
+│   └── import_tso_data_to_db.py # (旧サンプル、現行のmain.pyやmenu.py参照推奨)
+├── logs/                          # (オプション) ログファイル保存用
+├── tests/                         # (オプション) テストコード用
+├── main.py                        # メインスクリプト（ポータル、CLI引数処理）
+├── README.md                      # プロジェクト概要、使い方など
+├── project_structure.md           # このファイル
+├── requirements.txt               # Python依存パッケージ
+└── .gitignore                     # Git無視リスト
 ```
 
-## data_sources/tso/ 各ファイルの役割
+## `data_sources` 配下の主要モジュール役割
 
-- **unified_downloader.py**  
-  全TSO対応の統合ダウンローダー。日付範囲・複数TSO一括DL、ZIP展開、URL自動生成など。
-
-- **parser.py**  
-  TSOデータ（CSV/ZIP）のパース・標準化。列名マッピング、日付/時間変換、マスターキー生成、特殊フォーマット対応。
-
-- **db_importer.py**  
-  標準化済みTSOデータのDBインポート。エリア別・統合テーブル両対応。重複排除・トランザクション管理。
-
-- **tso_url_templates.py**  
-  各TSOのデータ取得URLテンプレート・エリア情報を一元管理。新TSO追加やURL変更も容易。
-
-- **downloader.py**  
-  個別用途や補助的なダウンロード処理。`unified_downloader.py`の補助や特殊ケース対応。
+-   **`jepx/jepx_da_price.py`**: JEPXスポット価格（エリアプライス、システムプライス）をウェブサイトから取得し、整形してDBに保存。
+-   **`jepx/jepx_bid.py`**: JEPX入札カーブ情報（買入札量、売入札量など）をウェブサイトから取得し、整形してDBに保存。
+-   **`jma/jma_historical.py`**: 気象庁の過去の気象観測データ（気温、日照時間、風速、天気など）をウェブサイトから取得し、整形。DB保存は `db_importer.py` に移譲する想定（現状は同ファイル内でDB保存まで実施）。
+-   **`jma/db_importer.py`**: `jma_historical.py` で取得・整形された気象データを `jma_weather` テーブルにインポート。
+-   **`occto/30min_gendata_downloader.py`**: OCCTOの30分毎発電実績データをウェブサイトから取得。`main.py`や`cli/menu.py`からサブプロセスとして呼び出され、取得したデータをDBに保存（内部で `db_importer.py` を使用）。
+-   **`occto/db_importer.py`**: `30min_gendata_downloader.py` で取得された発電実績データを `occto_30min_generation` テーブルにインポート。
+-   **`tso/unified_downloader.py`**: 各TSOのウェブサイトから需給実績（エリア需要、発電実績内訳など）や週間供給力などをダウンロード。
+-   **`tso/parser.py`**: `unified_downloader.py` でダウンロードされたTSOごとの異なるCSV/ZIPフォーマットを解析し、標準化されたDataFrameに変換。
+-   **`tso/db_importer.py`**: `parser.py` で標準化されたTSOデータを `tso_data` および `tso_area_X_data` テーブルにインポート。
 
 ## 拡張性
 
-- 新TSOや新フォーマット追加は、`tso_url_templates.py`と`parser.py`の拡張のみでOK。
-- 設定ファイル・モジュール分離により保守性・拡張性が高い。
+-   新しいデータソースの追加: `data_sources` ディレクトリ以下に新しいサブディレクトリを作成し、データ取得用スクリプトとDBインポート用スクリプトを配置。`main.py` や `cli/menu.py` に呼び出し処理を追加。
+-   新しいTSOやTSOのデータフォーマット変更への対応: 主に `data_sources/tso/parser.py` と、必要に応じて `data_sources/tso/unified_downloader.py` を修正。
 
-## 主要な処理フロー
+## 主要な処理フロー（一般化）
 
-1. **URLテンプレート管理** → 2. **データダウンロード** → 3. **パース・標準化** → 4. **DB保存**
-
-## 参考：今後の拡張ポイント
-
-- 新TSO・新フォーマット対応
-- データ可視化・Web UI
-- 予測モデル・高度な分析
+1.  **設定**: 開発者は `.env` ファイルを準備し `DB_PATH` 等を設定。
+2.  **実行**: ユーザーは `main.py` (CLI引数付き) または `cli/menu.py` (対話型) を実行。
+3.  **データ取得**: 各データソースのダウンローダースクリプトがそれぞれのウェブサイト等からデータをダウンロード。
+4.  **データ整形/パース**: ダウンロードされたデータは必要に応じて整形・パースされ、扱いやすい形式（通常はPandas DataFrame）に変換。
+5.  **データベース保存**: 整形済みデータが `db/duckdb_connection.py` を介してDuckDBデータベースの対応するテーブルに保存される。
 
 ## 主要モジュールと機能
 
-### メインアプリケーション (`main.py`)
+### メインアプリケーション (`main.py`, `cli/menu.py`)
 
-プロジェクトのコマンドラインインターフェースのエントリーポイントです：
+プロジェクトのコマンドラインインターフェースおよび対話型メニューのエントリーポイントです：
 
-- CLIの引数解析
-- TSO、JEPX、その他のデータソースへの統一アクセス
-- 対話型メニューの起動
-- エラー処理とロギング
+-   CLI引数解析 (`main.py`)
+-   対話型メニューの提供 (`cli/menu.py`)
+-   各データソースのダウンローダー/インポーターへの処理の委譲
+-   エラー処理とロギング
 
 ### データベース接続 (`db/duckdb_connection.py`)
 
 DuckDBへの接続と操作を提供する中心的なモジュールです：
 
-- データベース接続の初期化と管理
-- クエリ実行
-- データフレームの保存
-- エラーハンドリング
+-   データベース接続の初期化と管理。`.env` ファイルから `DB_PATH` を読み込み、指定がなければフォールバックパスを使用。
+-   SQLクエリ実行
+-   Pandas DataFrameのテーブルへの登録・挿入（`ON CONFLICT DO NOTHING` など重複排除対応）
+-   トランザクション管理（コミット、ロールバック）
+-   エラーハンドリング
 
 ### データベーススキーマ (`db/schema_definition.sql`)
 
-データベーステーブルの定義ファイルです：
+データベーステーブルのSQL CREATE TABLE文を記述したファイルです。 `DuckDBConnection` や各DBインポーターが参照し、テーブルが存在しない場合に作成します。
 
-- TSO統合テーブル (`tso_data`)
-- エリア別テーブル (`tso_area_X_data`)
-- JEPX価格テーブル (`jepx_da_price`)
-- その他の補助テーブル
+-   `jepx_da_price` (JEPXスポット価格)
+-   `occto_30min_generation` (OCCTO 30分発電実績)
+-   `jma_weather` (JMA気象データ)
+-   `tso_data` (TSO統合テーブル)
+-   `tso_area_X_data` (TSOエリア別テーブル)
+-   その他、必要に応じて補助テーブル
 
-### TSO統合ダウンローダー (`data_sources/tso/unified_downloader.py`)
+### JMA気象データ (`data_sources/jma/`)
 
-すべての電力会社からのデータを統一的にダウンロードする機能を提供します：
+-   `jma_historical.py`: 気象庁のウェブサイトから過去の気象観測データをダウンロードし、DataFrameに整形。DB保存処理も含む。
+-   `db_importer.py`: `jma_historical.py` から呼び出され、整形済みDataFrameを `jma_weather` テーブルにインポート。
 
-- 単一または複数のTSOからのデータダウンロード
-- 需要データと供給データの両方に対応
-- ZIPファイルの自動処理
-- 異なるCSVフォーマットへの対応
-- 日付範囲指定ダウンロード
-- 正規表現によるURL生成と日付抽出
+### OCCTO 30分発電実績 (`data_sources/occto/`)
 
-### TSO データベースインポーター (`data_sources/tso/db_importer.py`)
+-   `30min_gendata_downloader.py`: OCCTOのウェブサイトから30分毎の発電実績JSONデータをダウンロードし、DataFrameに整形。DB保存処理も含む（`db_importer.py` を使用）。
+-   `db_importer.py`: `30min_gendata_downloader.py` から呼び出され、整形済みDataFrameを `occto_30min_generation` テーブルにインポート。
 
-ダウンロードしたTSOデータをデータベースにインポートする機能を提供します：
+(その他のモジュール説明は `README.md` と重複するため、ここでは省略。必要に応じて追記可能)
 
-- データベーステーブルの自動作成と管理
-- データフレームの前処理とDB保存
-- データの整形とmaster_keyの生成
-- エリアごとのテーブル管理
-- トランザクション管理とエラーハンドリング
+## データベーススキーマ (主要テーブル詳細)
 
-### JEPX データダウンローダー
+### `jepx_da_price` (JEPX前日スポット価格)
 
-JEPX（日本卸電力取引所）からのデータ取得機能：
+-   `date` TEXT - 日付 (YYYYMMDD)
+-   `slot` INTEGER - 時間帯 (1-48)
+-   `apX_areaname` DOUBLE - 各エリアのスポット価格 (例: `ap1_hokkaido`, `ap2_tohoku`)
+-   `spot_avg_price` DOUBLE - システムプライス (全国平均)
+-   PRIMARY KEY: (`date`, `slot`)
 
-- 前日スポット価格データのダウンロード (`data_sources/jepx/jepx_da_price.py`)
-- 価格データのDB保存と変換
+### `occto_30min_generation` (OCCTO 30分毎発電実績)
 
-## 主な使用例
+-   `master_key` TEXT PRIMARY KEY - YYYYMMDD_プラントコード_ユニット番号
+-   `date` TEXT - 日付 (YYYYMMDD)
+-   `plant_code` TEXT - プラントコード
+-   `unit_num` TEXT - ユニット番号 (ない場合は '0' などで補完)
+-   `plant_name` TEXT - プラント名
+-   `output_mw` DOUBLE - 平均出力 (MW) ※元データは時間断面ごとの値
+-   `area_code` TEXT - 広域機関エリアコード (例: 'TKA01')
+-   `system_code` TEXT - 一般送配電事業者エリアコード (例: '03')
+-   `generation_type_code` TEXT - 発電方式コード (例: '0101')
+-   `generation_type_name` TEXT - 発電方式名 (例: '一般水力')
+-   `slot1` DOUBLE ... `slot48` DOUBLE - 30分毎の発電実績(MW)
 
-### メインアプリケーションの実行
+### `jma_weather` (JMA気象データ - 1時間ごと)
 
-```bash
-# 東北電力の需要データをダウンロード (2024年4月1日〜10日)
-python main.py tso-data --tso-ids tohoku --start-date 2024-04-01 --end-date 2024-04-10
+-   `primary_key` TEXT PRIMARY KEY - 地点ID_年月日時分 (例: 47662_202301010000)
+-   `station_id` TEXT - 気象台地点ID (例: 47662)
+-   `date` TEXT - 日付 (YYYY-MM-DD)
+-   `time` TEXT - 時刻 (HH:MM)
+-   `temperature` DOUBLE - 気温(℃)
+-   `sunshine_duration` DOUBLE - 日照時間(h)
+-   `global_solar_radiation` DOUBLE - 全天日射量(MJ/m2)
+-   `wind_speed` DOUBLE - 風速(m/s)
+-   `wind_direction_sin` DOUBLE - 風向のSin成分 (北:0, 東:1, 南:0, 西:-1)
+-   `wind_direction_cos` DOUBLE - 風向のCos成分 (北:1, 東:0, 南:-1, 西:0)
+-   `weather_description` TEXT - 天気概況 (JMAのテキスト記述)
+-   `snowfall_depth` DOUBLE - 積雪深(cm)
 
-# JEPXの価格データをダウンロード
-python main.py jepx-price
-
-# インタラクティブメニューを表示
-python main.py menu
-```
-
-### 対話型インターフェース
-
-```bash
-# シェルスクリプトから実行
-./run_tso_cli.sh
-
-# または直接実行
-python data_sources/tso/unified_downloader.py
-```
-
-このインターフェースでは、ユーザーが対話的にTSOとデータ期間を選択し、需要データを表示できます。
-
-### データベースへのインポート
-
-```bash
-# コマンドラインから実行
-python data_sources/tso/db_importer.py --start-date 2024-01-01 --end-date 2024-01-31
-
-# 特定のTSOのみ
-python data_sources/tso/db_importer.py --tso-id tepco --tso-id kansai
-```
-
-### プログラムからの使用
-
-```python
-from data_sources.tso.unified_downloader import UnifiedTSODownloader
-from db.duckdb_connection import DuckDBConnection
-from datetime import date
-
-# DB接続を作成
-db = DuckDBConnection("/Volumes/MacMiniSSD/powermarketdata/power_market_data")
-
-# ダウンローダーを初期化
-downloader = UnifiedTSODownloader(
-    tso_ids=['tepco', 'kansai'],
-    db_connection=db,
-    url_type='demand'
-)
-
-# 特定期間のデータをダウンロード
-start_date = date(2024, 1, 1)
-end_date = date(2024, 1, 31)
-results = downloader.download_files(start_date, end_date)
-```
-
-## データベーススキーマ
-
-最新のテーブル構造：
-
-### TSO統合テーブル (`tso_data`)
-
-このテーブルは全てのTSOデータを横持ち（各エリアのデータを同一行に格納）する形式で保存します：
-
-- `master_key VARCHAR PRIMARY KEY` - ユニーク識別子 (date_slot_areacode形式)
-- `date VARCHAR` - 日付 (YYYYMMDD形式)
-- `slot INTEGER` - 時間枠 (1-48または1-96)
-- エリアコード別カラム:
-  - `1_area_demand`, `1_nuclear`, `1_LNG`... (北海道電力)
-  - `2_area_demand`, `2_nuclear`, `2_LNG`... (東北電力)
-  - ...
-  - `9_area_demand`, `9_nuclear`, `9_LNG`... (九州電力)
-
-### エリア別テーブル (`tso_area_X_data`)
-
-各TSOエリアのデータを個別に格納するテーブル（X=1〜9のエリアコード）：
-
-- `master_key VARCHAR PRIMARY KEY` - ユニーク識別子
-- `date TEXT` - 日付
-- `slot INTEGER` - 時間枠
-- `area_demand DOUBLE` - エリア需要
-- `nuclear DOUBLE` - 原子力発電
-- `LNG DOUBLE` - LNG火力発電
-- `coal DOUBLE` - 石炭火力発電
-- その他の電源種別カラム
-
-### JEPX価格テーブル (`jepx_da_price`)
-
-- `date TEXT` - 日付
-- `slot INTEGER` - 時間帯
-- `ap1_hokkaido` ~ `ap9_kyushu` - エリア別価格
-- `spot_avg_price` - スポット平均価格
-- その他の市場関連データ
+(TSO関連テーブルスキーマは `README.md` を参照)
 
 ## 最近の更新と改善点
 
-1. 東北電力(tohoku)のURLテンプレート更新
-   - 最新のデータフォーマットに対応するよう修正
-
-2. データベーススキーマの改善
-   - `date`カラムを`DATE`型から`VARCHAR`型に変更して日付形式の一貫性を保持
-   - `slot`カラムを`VARCHAR`から`INTEGER`に変更してデータ分析を容易化
-
-3. トランザクション管理の最適化
-   - エラー処理の改善
-   - パフォーマンスの向上
+1.  **JMA気象データ収集機能の追加**: `data_sources/jma/` に履歴データ取得とDB保存を実装。
+2.  **OCCTO 30分発電実績データ収集・処理機能の改善**: ダウンローダーとDBインポーターの修正、スキーマ変更（master_key導入、カラム名変更、データ型修正）。
+3.  **データベースパスの `.env` 化**: `DB_PATH` 環境変数を `.env` ファイルから読み込むように `db/duckdb_connection.py` を修正。
+4.  TSOデータ処理のモジュール化とリファクタリング。
+5.  全体的なエラーハンドリングとロギングの改善。
 
 ## 拡張ポイント
 
 このプロジェクトは以下の方向に拡張できます：
 
-1. 新しいデータソースの追加
-2. データ可視化機能の実装
-3. 予測モデルの統合
-4. Webインターフェースの開発
-5. 複数電力会社データの高度な分析機能の追加 
+1.  新しいデータソースの追加（例：他のOCCTOデータ、EEXなどの海外市場データ）
+2.  データ可視化機能の実装（Streamlit, Dashなど）
+3.  予測モデルの統合（時系列予測など）
+4.  Web APIインターフェースの開発 (FastAPIなど)
+5.  テストカバレッジの向上 

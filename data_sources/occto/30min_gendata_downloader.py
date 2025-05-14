@@ -318,75 +318,78 @@ class OCCTOStandaloneDownloader:
             return pd.DataFrame() # Return empty DataFrame on error
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Download OCCTO 30-min generation data and import to DB") # Updated description
+    """Parses command-line arguments for the standalone downloader."""
+    parser = argparse.ArgumentParser(description="Download OCCTO 30-min generation data.")
     parser.add_argument(
         "--start-date", 
-        type=lambda s: datetime.strptime(s, '%Y-%m-%d').date(),
-        help="Start date (YYYY-MM-DD)",
-        required=True
+        type=str, 
+        required=True, 
+        help="Start date in YYYY-MM-DD format"
     )
     parser.add_argument(
         "--end-date", 
-        type=lambda s: datetime.strptime(s, '%Y-%m-%d').date(),
-        help="End date (YYYY-MM-DD)",
-        default=None
+        type=str, 
+        required=True, 
+        help="End date in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--max-rows", 
+        type=int, 
+        default=10, 
+        help="Maximum rows to display if not saving to DB (default: 10)"
     )
     parser.add_argument(
         "--db-path",
         type=str,
-        default=None,
-        help="Path to the SQLite database file (defaults to ./power_market_data.db)"
+        default=None, # .env または DuckDBConnection のデフォルト解決に任せる
+        help="Path to the DuckDB database file. If not provided, uses DB_PATH from .env or a default."
     )
+    # Add other arguments like output directory if needed later
     return parser.parse_args()
 
 def main():
+    """Main function to run the standalone downloader and importer."""
     args = parse_args()
-    
-    # If end_date is not specified, use the start_date
-    end_date = args.end_date if args.end_date else args.start_date
-    
-    logger.info(f"Starting OCCTO data download for {args.start_date} to {end_date}...")
 
-    # Create downloader instance
-    downloader = OCCTOStandaloneDownloader() # Class name might still be Standalone
-    
-    # Get raw JSON data
-    json_data = downloader.download_plant_operation_data(
-        start_date=args.start_date,
-        end_date=end_date,
-        # Removed max_rows and save_to_temp arguments as they are no longer used here
-    ) # This method needs to be modified to return the JSON or DataFrame
-
-    if not json_data:
-         logger.error("Failed to download data. Exiting.")
-         return
-
-    # Process JSON to DataFrame (using the new internal method)
-    raw_df = downloader._process_json_to_dataframe(json_data)
-
-    if raw_df.empty:
-        logger.warning("No data obtained after processing JSON. Exiting.")
-        return
-        
-    logger.info("Data download and initial processing complete.")
-    logger.info("Initializing database importer...")
-
-    # Import data into database
     try:
-        importer = OCCTO30MinDBImporter(db_path=args.db_path)
-        transformed_df = importer.transform_occto_data(raw_df)
-        
-        if not transformed_df.empty:
-            logger.info("Inserting data into the database...")
-            importer.insert_occto_data(transformed_df)
-            logger.info("Database import process finished.")
-        else:
-             logger.warning("Data transformation resulted in an empty DataFrame. Nothing inserted.")
+        start_date_obj = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+        end_date_obj = datetime.strptime(args.end_date, "%Y-%m-%d").date()
+    except ValueError:
+        logger.error("Invalid date format. Please use YYYY-MM-DD.")
+        return
 
-    except Exception as e:
-        logger.error(f"An error occurred during database import: {e}")
-        import traceback
-        traceback.print_exc()
+    if end_date_obj < start_date_obj:
+        logger.error("End date cannot be earlier than start date.")
+        return
+
+    downloader = OCCTOStandaloneDownloader()
+    # The download_plant_operation_data now directly returns the JSON data
+    json_data = downloader.download_plant_operation_data(start_date_obj, end_date_obj)
+
+    if json_data:
+        logger.info("Data download successful, proceeding to data processing and database import.")
+        # Directly use the _process_json_to_dataframe method to get the DataFrame
+        df_transformed = downloader._process_json_to_dataframe(json_data)
+
+        if df_transformed is not None and not df_transformed.empty:
+            logger.info(f"Successfully transformed data into DataFrame with {len(df_transformed)} rows.")
+            logger.debug(f"DataFrame columns: {df_transformed.columns.tolist()}")
+            logger.debug(f"DataFrame head:\n{df_transformed.head().to_string()}")
+            
+            # Initialize and use the DB importer
+            try:
+                # Pass the db_path from command line arguments
+                with OCCTO30MinDBImporter(db_path=args.db_path) as importer:
+                    num_inserted = importer.insert_occto_data(df_transformed)
+                    logger.info(f"Successfully inserted {num_inserted} rows into the database.")
+            except Exception as e:
+                logger.error(f"Error during database import: {e}", exc_info=True)
+        elif df_transformed is None:
+            logger.error("Data processing to DataFrame failed.")
+        else:
+            logger.warning("Transformed DataFrame is empty. Nothing to import.")
+    else:
+        logger.error("Failed to download OCCTO data. See logs for details.")
 
 if __name__ == "__main__":
     main() 

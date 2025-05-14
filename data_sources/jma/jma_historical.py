@@ -17,10 +17,18 @@ import sys # Added for checking sys.argv
 import io # For StringIO
 import math # Added for math.sin, math.cos, math.radians
 
+# Add the project root to the Python path
+# Corrected calculation: Go up 3 levels from the current file
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import requests # From requirements.txt
 from bs4 import BeautifulSoup # Added for HTML parsing
 import pandas as pd # Added for DataFrame manipulation
 # from db.duckdb_connection import DuckDBConnection # Added for DB connection
+from data_sources.jma.db_importer import JMAWeatherDBImporter # Import the JMA importer (absolute)
+from db.duckdb_connection import DuckDBConnection # Import base DB connection (absolute)
 
 # Configure logging
 logging.basicConfig(
@@ -138,6 +146,8 @@ def parse_cli_args() -> argparse.Namespace:
         default=1.2,
         help="Seconds to wait between consecutive requests (default: 1.2).",
     )
+    parser.add_argument("--db-path", default=None, help="Path to the DuckDB database file. If not provided, uses DB_PATH from .env or a default.")
+    parser.add_argument("--skip-db-import", action='store_true', help="Skip importing data into the database.")
     args = parser.parse_args()
 
     # Validate and convert arguments
@@ -248,8 +258,22 @@ def get_interactive_args() -> argparse.Namespace:
         end_date=end_date,
         interval=interval,
         outdir=outdir, 
-        rate=rate
+        rate=rate,
+        # Add db_path and skip_db_import for interactive mode
+        db_path=None, # .env または DuckDBConnection のデフォルト解決に任せる
+        skip_db_import=False # Default is to import
     )
+    
+    # Ask about DB path - REMOVED (already removed in previous step)
+    # db_path_in = input(f"Enter database path (default: {args_namespace.db_path}): ")
+    # if db_path_in.strip():
+    #     args_namespace.db_path = db_path_in.strip()
+
+    # Ask about skipping DB import
+    skip_import_in = input(f"Skip database import? (yes/NO): ")
+    if skip_import_in.strip().lower() in ['yes', 'y']:
+        args_namespace.skip_db_import = True
+
     return args_namespace
 
 def month_range(
@@ -749,186 +773,187 @@ def main():
                         logger.debug(f"DataFrame columns after mapping: {df.columns.tolist()}")
                         
                         # Ensure 'datetime_raw' or 'datetime' column exists before proceeding
-                        if 'datetime_raw' not in df.columns and 'datetime' not in df.columns and not df.empty:
-                             logger.error(f"CRITICAL: Neither 'datetime_raw' nor 'datetime' column found after mapping for station {station}, {year}-{month:02d}. Columns: {df.columns.tolist()}")
-                             # Attempt to identify a datetime-like column if 'datetime_raw' is missing
+                        datetime_col_name = None
+                        if 'datetime_raw' in df.columns:
+                            datetime_col_name = 'datetime_raw'
+                        elif 'datetime' in df.columns:
+                            # Check if it's already datetime type
+                            if pd.api.types.is_datetime64_any_dtype(df['datetime']):
+                                datetime_col_name = 'datetime'
+                            else:
+                                # Try converting it if it exists but is not the right type
+                                logger.warning("'datetime' column exists but is not datetime type. Attempting conversion.")
+                                try:
+                                    if args.interval == 'hourly':
+                                        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+                                        if df['datetime'].isna().sum() > len(df) * 0.5:
+                                            df['datetime'] = pd.to_datetime(df['datetime'], format='%Y/%m/%d %H:%M:%S', errors='coerce')
+                                    else: # daily
+                                        df['datetime'] = pd.to_datetime(df['datetime'], format='%Y/%m/%d', errors='coerce')
+                                    datetime_col_name = 'datetime'
+                                except Exception as e_conv:
+                                    logger.error(f"Failed to convert existing 'datetime' column: {e_conv}")
+                                    # Fall through, datetime_col_name remains None
+                        
+                        if not datetime_col_name and not df.empty:
+                             logger.error(f"CRITICAL: Neither 'datetime_raw' nor a convertible 'datetime' column found for station {station}, {year}-{month:02d}. Columns: {df.columns.tolist()}")
                              potential_dt_cols = [col for col in df.columns if 'date' in col or 'time' in col or '年月' in col]
                              if potential_dt_cols:
-                                 logger.warning(f"Attempting to use '{potential_dt_cols[0]}' as datetime_raw as a fallback.")
-                                 df.rename(columns={potential_dt_cols[0]: 'datetime_raw'}, inplace=True)
+                                 logger.warning(f"Attempting to use '{potential_dt_cols[0]}' as datetime source as a fallback.")
+                                 datetime_col_name = potential_dt_cols[0]
+                                 # Try converting this fallback column
+                                 try:
+                                    if args.interval == 'hourly':
+                                        df[datetime_col_name + '_dt'] = pd.to_datetime(df[datetime_col_name], errors='coerce')
+                                        if df[datetime_col_name + '_dt'].isna().sum() > len(df) * 0.5:
+                                             df[datetime_col_name + '_dt'] = pd.to_datetime(df[datetime_col_name], format='%Y/%m/%d %H:%M:%S', errors='coerce')
+                                    else: # daily
+                                        df[datetime_col_name + '_dt'] = pd.to_datetime(df[datetime_col_name], format='%Y/%m/%d', errors='coerce')
+                                    if df[datetime_col_name + '_dt'].notna().any():
+                                        df['datetime'] = df[datetime_col_name + '_dt'] # Assign to standard 'datetime' col
+                                        datetime_col_name = 'datetime' # Now use the converted one
+                                    else:
+                                        logger.error("Fallback datetime column conversion failed.")
+                                        datetime_col_name = None # Conversion failed
+                                 except Exception as e_fb_conv:
+                                    logger.error(f"Fallback datetime conversion failed: {e_fb_conv}")
+                                    datetime_col_name = None
                              else:
                                  logger.error("No suitable fallback datetime column identified. Skipping this file.")
                                  continue
-
-
-                        if 'datetime_raw' in df.columns:
-                            # JMA hourly data is 'YYYY/MM/DD HH:MM' (e.g., 2023/04/01 01:00) or YYYY/M/D H:MM:SS
-                            # JMA daily data is 'YYYY/MM/DD'
-                            if args.interval == 'hourly':
-                                # Try to infer or use a more flexible format for hourly data based on new log
-                                # Log shows: '2025/4/1 1:00:00' - month, day, hour might not be zero-padded, seconds are present
-                                try:
-                                    df['datetime'] = pd.to_datetime(df['datetime_raw'], errors='coerce') # Try inferring first
-                                    # If inference fails for many, try specific format that handles non-padded month/day/hour
-                                    # Note: %-m, %-d, %-H are platform-dependent (Linux/macOS).
-                                    # For broader compatibility, consider custom parsing or replacing spaces around H:M:S if needed.
-                                    # Given the log example '2025/4/1 1:00:00', this format should work:
-                                    df['datetime'] = pd.to_datetime(df['datetime_raw'], format='%Y/%m/%d %H:%M:%S', errors='coerce')
-                                except Exception as e_dt:
-                                    logger.error(f"Exception during hourly datetime conversion: {e_dt}")
-                                    df['datetime'] = pd.NaT # Ensure column exists with NaT if all attempts fail
-
-                            else: # daily
-                                df['datetime'] = pd.to_datetime(df['datetime_raw'], format='%Y/%m/%d', errors='coerce')
-                            
-                            # ★★★ Log rows that failed datetime parsing ★★★
-                            failed_datetime_parse_df = df[df['datetime'].isna() & df['datetime_raw'].notna()]
-                            if not failed_datetime_parse_df.empty:
-                                logger.warning(f"Failed to parse datetime for {len(failed_datetime_parse_df)} rows for station {station}, {year}-{month:02d}. Examples of unparsed datetime_raw: {failed_datetime_parse_df['datetime_raw'].head().tolist()}")
-
-                            df = df.drop(columns=['datetime_raw'])
-                        elif 'datetime' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['datetime']):
-                            # If 'datetime' column exists but is not datetime type, try to convert it
-                            logger.warning("'datetime' column exists but is not datetime type. Attempting conversion.")
-                            if args.interval == 'hourly':
-                                try:
-                                    df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce') # Try inferring first
-                                    if df['datetime'].isna().sum() > len(df) * 0.5:
-                                        logger.warning("Inferring datetime format failed for many rows (secondary path), trying specific formats for hourly data.")
-                                        df['datetime'] = pd.to_datetime(df['datetime'], format='%Y/%m/%d %H:%M:%S', errors='coerce')
-                                except Exception as e_dt_secondary:
-                                    logger.error(f"Exception during hourly datetime conversion (secondary path): {e_dt_secondary}")
-                                    if 'datetime' in df.columns: # Check if column still exists
-                                       df['datetime'] = pd.NaT
-                                    else: # Should not happen, but as a safeguard
-                                       df = df.assign(datetime=pd.NaT)
-                            else: # daily
-                                df['datetime'] = pd.to_datetime(df['datetime'], format='%Y/%m/%d', errors='coerce')
-                            
-                            # ★★★ Log rows that failed datetime parsing (secondary path) ★★★
-                            failed_datetime_parse_df_secondary = df[df['datetime'].isna()] # Assuming original column was already named 'datetime'
-                            if not failed_datetime_parse_df_secondary.empty:
-                                logger.warning(f"Failed to parse datetime (secondary path) for {len(failed_datetime_parse_df_secondary)} rows for station {station}, {year}-{month:02d}. Original values might not be available if 'datetime_raw' was not present.")
-
-                        # Re-evaluate this drop: if all fail, df becomes empty.
-                        if df['datetime'].isna().all() and not df.empty:
-                            logger.error(f"All datetime conversions failed for station {station}, {year}-{month:02d}. DataFrame will be empty. Check datetime format and raw values.")
-                            # df = pd.DataFrame() # Make it empty to prevent downstream errors, or handle as error
-                        else:
-                            df = df.dropna(subset=['datetime'])
-
-                        # Define required columns based on user's *actual* desired items
-                        required_cols_standard = [
-                            'datetime', 
-                            'temperature', 
-                            'sunshine_duration', 
-                            'wind_speed', 
-                            'wind_direction', 
-                            'global_solar_radiation', 
-                            'weather_description', 
-                            'snowfall_depth'
-                        ]
-                        # No longer including: 'precipitation', 'local_air_pressure', 'relative_humidity'
-
-                        select_cols = [col for col in df.columns if col in required_cols_standard or col in ['station_id', 'interval', 'master_key']]
                         
-                        # Ensure all available mapped data based on the refined column_mapping are kept.
-                        present_mapped_cols = [col for mapped_key in column_mapping if (col := column_mapping[mapped_key]) in df.columns and col != 'datetime_raw']
-                        select_cols = list(set(['datetime'] + present_mapped_cols + ['station_id', 'interval', 'master_key']))
-                        select_cols = [c for c in select_cols if c in df.columns] # Keep only those actually in df
+                        # Proceed only if we have a valid datetime source column identified
+                        if datetime_col_name:
+                            if datetime_col_name == 'datetime_raw': # If source was raw, convert it now
+                                if args.interval == 'hourly':
+                                    try:
+                                        df['datetime'] = pd.to_datetime(df['datetime_raw'], errors='coerce') # Try inferring first
+                                        if df['datetime'].isna().sum() > len(df) * 0.5:
+                                             df['datetime'] = pd.to_datetime(df['datetime_raw'], format='%Y/%m/%d %H:%M:%S', errors='coerce')
+                                    except Exception as e_dt:
+                                        logger.error(f"Exception during hourly datetime conversion from raw: {e_dt}")
+                                        df['datetime'] = pd.NaT 
+                                else: # daily
+                                    df['datetime'] = pd.to_datetime(df['datetime_raw'], format='%Y/%m/%d', errors='coerce')
+                                
+                                # Log parsing failures
+                                failed_datetime_parse_df = df[df['datetime'].isna() & df['datetime_raw'].notna()]
+                                if not failed_datetime_parse_df.empty:
+                                    logger.warning(f"Failed to parse datetime for {len(failed_datetime_parse_df)} rows from raw for station {station}, {year}-{month:02d}. Examples: {failed_datetime_parse_df['datetime_raw'].head().tolist()}")
+                                
+                                df = df.drop(columns=['datetime_raw'], errors='ignore')
+                            # Now we should have a 'datetime' column of datetime64 type
+                            
+                            if 'datetime' in df.columns and pd.api.types.is_datetime64_any_dtype(df['datetime']):
+                                # Drop rows where datetime conversion failed
+                                initial_rows = len(df)
+                                df = df.dropna(subset=['datetime'])
+                                if len(df) < initial_rows:
+                                    logger.warning(f"Dropped {initial_rows - len(df)} rows due to failed datetime conversion for {station} {year}-{month:02d}.")
 
-                        missing_cols = set(required_cols_standard) - set(select_cols)
-                        # Optional cols are less critical if missing
-                        optional_cols = {'weather_description', 'snowfall_depth'} # Global solar can also be optional
-                        missing_cols -= optional_cols
+                                # Create date and time columns
+                                df['date'] = df['datetime'].dt.strftime('%Y-%m-%d')
+                                df['time'] = df['datetime'].dt.strftime('%H:%M')
+                                
+                                # Create the new primary key
+                                df['station_id'] = station # Ensure station_id column exists
+                                df['primary_key'] = df.apply(
+                                    lambda row: f"{row['station_id']}_{row['datetime'].strftime('%Y%m%d%H%M')}" if pd.notna(row['datetime']) else None, axis=1
+                                )
+                                
+                                # Drop original datetime column and old master_key if it exists
+                                df = df.drop(columns=['datetime', 'master_key'], errors='ignore')
+                                
+                            else:
+                                logger.error(f"Final 'datetime' column is missing or not datetime type after processing for {station} {year}-{month:02d}. Cannot create date/time/primary_key.")
+                                df = pd.DataFrame() # Make DF empty if essential steps failed
+                        else: 
+                            # If no valid datetime source was found even after fallback
+                            logger.error(f"No valid datetime source identified for {station} {year}-{month:02d}. Skipping file.")
+                            df = pd.DataFrame() # Make DF empty
 
-                        if missing_cols:
-                            logger.warning(f"For station {station}, {year}-{month:02d}, potentially missing expected data columns after processing: {missing_cols}. Selected for output: {select_cols}. All available: {df.columns.tolist()}")
+                        # If df became empty due to errors, skip further processing for this file
+                        if df.empty:
+                            logger.warning(f"DataFrame is empty for station {station}, {year}-{month:02d}. Skipping processing and save.") # Adjusted log
+                            continue
                         
-                        if not 'datetime' in select_cols and not df.empty:
-                             logger.error(f"CRITICAL: 'datetime' column is missing from select_cols for station {station}, {year}-{month:02d} but df is not empty. This should not happen.")
-                             # Fallback to keep all columns if datetime is somehow lost, to aid debugging.
-                             # However, this might lead to errors later if schema is strict.
-                             # df = df # No change, keep all columns to see what went wrong.
-                        elif not df.empty:
-                            df = df[select_cols]
+                        # --- Apply Sin/Cos Calculation --- 
+                        # Moved here: Call after basic processing and before final column selection
+                        if 'wind_direction' in df.columns:
+                            logger.info("Calling calculate_wind_components...")
+                            if not df.empty:
+                                logger.debug(f"Sample wind_direction input: {df['wind_direction'].head().tolist()}")
+                            df = calculate_wind_components(df) # This adds sin/cos columns
+                            logger.info("Finished calculate_wind_components.")
+                            logger.debug(f"Columns after calculate_wind_components: {df.columns.tolist()}")
                         else:
-                            # df is empty, select_cols might be just ['datetime'] or empty if all rows failed datetime conversion
-                            # Create an empty df with expected columns if df itself is empty.
-                            if df.empty:
-                                logger.warning(f"DataFrame became empty for {station} {year}-{month:02d} (likely all rows failed datetime conversion). Creating empty frame with expected columns.")
-                                df = pd.DataFrame(columns=select_cols) # Ensure schema consistency for empty data.                        
+                            logger.warning("'wind_direction' column not found before sin/cos calculation. Adding empty sin/cos columns.")
+                            df['wind_direction_sin'] = pd.NA
+                            df['wind_direction_cos'] = pd.NA
 
-                        df['station_id'] = station
-                        df['interval'] = args.interval
-
-                        # master_key の作成 (station_id, datetime, interval)
-                        if 'datetime' in df.columns and pd.api.types.is_datetime64_any_dtype(df['datetime']):
-                            df['master_key'] = df.apply(
-                                lambda row: f"{row['station_id']}_{row['datetime'].strftime('%Y%m%d%H%M%S')}_{row['interval']}" if pd.notna(row['datetime']) else None, axis=1
-                            )
-                            df = df.dropna(subset=['master_key']) # Drop rows where master_key could not be formed
-                        else:
-                            logger.error(f"Cannot create 'master_key' due to missing or invalid 'datetime' column for {station} {year}-{month:02d}.")
-                            # Create an empty master_key column to prevent errors if df is not empty
-                            if 'master_key' not in df.columns : df['master_key'] = None
-
-
-                        # 数値カラムを数値型に変換 (ensure these are the final mapped names)
-                        numeric_cols_final = [
-                            'temperature', 'sunshine_duration', 'wind_speed', 
-                            'global_solar_radiation', 'snowfall_depth' 
-                            # wind_direction is handled separately if numeric, weather_description is text
+                        # Define FINAL required columns based on user's schema
+                        required_cols_final_schema = [
+                            'primary_key', 'station_id', 'date', 'time', 'temperature', 
+                            'sunshine_duration', 'global_solar_radiation', 'wind_speed', 
+                            'wind_direction_sin', 'wind_direction_cos', 
+                            'weather_description', 'snowfall_depth'
                         ]
-                        # if 'wind_direction' in df.columns: # wind_direction might be numeric (deg) or categorical
-                        #      df['wind_direction'] = pd.to_numeric(df['wind_direction'], errors='coerce') # <-- REMOVE THIS LINE OR COMMENT IT OUT
+                        
+                        # Ensure all required columns exist, adding missing ones with NA if necessary
+                        for col in required_cols_final_schema:
+                            if col not in df.columns:
+                                logger.warning(f"Required column '{col}' missing after processing. Adding column with NA values.")
+                                df[col] = pd.NA 
+                        
+                        # Select and reorder columns *strictly* according to the final schema ONCE
+                        logger.info(f"Selecting final columns: {required_cols_final_schema}")
+                        # Ensure we only select columns that actually exist in the df at this point
+                        final_columns_present = [col for col in required_cols_final_schema if col in df.columns]
+                        df = df[final_columns_present]
 
-                        for col in numeric_cols_final:
-                            if col in df.columns and not df.empty:
+                        # Convert numeric types (Moved after final column selection)
+                        numeric_cols_to_convert = [
+                            'temperature', 'sunshine_duration', 'global_solar_radiation', 
+                            'wind_speed', 'wind_direction_sin', 'wind_direction_cos', 
+                            'snowfall_depth' 
+                        ]
+
+                        for col in numeric_cols_to_convert:
+                            if col in df.columns:
                                 df[col] = pd.to_numeric(df[col], errors='coerce')
-                            elif not df.empty and col not in df.columns:
-                                logger.debug(f"Numeric conversion: Column '{col}' not found in DataFrame. Skipping.")
-                            # If df is empty, do nothing for this column
+                            else:
+                                # This case should be less likely now due to the check above, but kept for safety
+                                logger.debug(f"Numeric conversion: Column '{col}' not found in final DataFrame. Skipping.")
 
-                        # 最終的なカラム順序をスキーマに合わせて整える
-                        final_cols_order_base = ['master_key', 'station_id', 'datetime', 'interval']
-                        data_cols_ordered = [
-                            'temperature', 'sunshine_duration', 'wind_speed', 'wind_direction',
-                            'global_solar_radiation', 'weather_description', 'snowfall_depth'
-                        ]
-                        
-                        final_cols_order = final_cols_order_base + [col for col in data_cols_ordered if col in df.columns]
-                        # Add any other columns that might have been parsed but are not in the predefined order
-                        additional_parsed_cols = [col for col in df.columns if col not in final_cols_order]
-                        final_cols_order.extend(additional_parsed_cols)
-                        
-                        df = df[[col for col in final_cols_order if col in df.columns]] # Reorder and ensure only existing columns
+                        # Round sin/cos columns to 2 decimal places
+                        if 'wind_direction_sin' in df.columns:
+                            df['wind_direction_sin'] = df['wind_direction_sin'].round(2)
+                        if 'wind_direction_cos' in df.columns:
+                            df['wind_direction_cos'] = df['wind_direction_cos'].round(2)
 
-                        logger.info(f"DataFrame for station {station}, {year}-{month:02d} ({args.interval}) processed. Columns: {df.columns.tolist()}")
+                        logger.info(f"Final DataFrame for station {station}, {year}-{month:02d} ({args.interval}) ready. Columns: {df.columns.tolist()}")
                         if not df.empty:
-                            logger.debug(f"DataFrame head:\\n{df.head().to_string()}")
+                            logger.debug(f"Final DataFrame head:\n{df.head().to_string()}")
 
-                            # CSVファイル出力処理
-                            if args.outdir:
-                                os.makedirs(args.outdir, exist_ok=True)
-                                filename = f"jma_weather_{station}_{year}_{month:02d}_{args.interval}.csv"
-                                filepath = os.path.join(args.outdir, filename)
+                            # Import data into DuckDB unless skipped
+                            if not args.skip_db_import:
+                                logger.info(f"Attempting to import data into DuckDB (DB path from args: {args.db_path}) for station {station}, {year}-{month:02d}...")
                                 try:
-                                    df.to_csv(filepath, index=False, encoding='utf-8-sig')
-                                    logger.info(f"Successfully saved data to {filepath}")
+                                    # Use context manager for the importer to ensure connection closing
+                                    # JMAWeatherDBImporter will use DuckDBConnection, which resolves None to .env path
+                                    with JMAWeatherDBImporter(db_path=args.db_path) as importer:
+                                        inserted_count = importer.import_dataframe(df)
+                                        logger.info(f"Successfully imported {inserted_count} rows into DuckDB table 'jma_weather'.")
                                 except Exception as e:
-                                    logger.error(f"Failed to save CSV to {filepath}: {e}")
-
-                            # DB格納処理 (DuckDBConnectionを使用)
-                            # db_path = None # または args.db_path などで指定
-                            # with DuckDBConnection(db_path) as db:
-                            #     db.save_dataframe(df, 'jma_weather', check_duplicate_master_key=True)
-                            # logger.info(f"Saved {len(df)} rows to jma_weather for {station} {year}-{month:02d}")
+                                    logger.error(f"Failed to import data into DuckDB for station {station}, {year}-{month:02d}: {e}", exc_info=True)
+                            else:
+                                logger.info("Skipping database import as per --skip-db-import flag.")
                         else:
                             logger.warning("Created DataFrame is empty.")
 
                     except Exception as e:
-                        logger.error(f"Error processing CSV for station {station}, {year}-{month:02d}: {e}", exc_info=True)
+                        # Log error for the specific month/station but continue with others
+                        logger.error(f"Error processing data for station {station}, month {year}-{month:02d}: {e}", exc_info=True)
                         continue # 次のファイルの処理へ
                 else:
                     logger.error(
@@ -938,7 +963,8 @@ def main():
                 logger.info(f"Waiting for {args.rate} seconds before next request...")
                 time.sleep(args.rate)
     
-    logger.info("JMA data download process completed.")
+    logger.info("JMA historical data download and CSV generation finished.") # Adjusted log message
+    # No explicit return of DataFrame from main, script focuses on CSV saving.
 
 if __name__ == "__main__":
     main() 

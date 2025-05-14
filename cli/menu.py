@@ -35,7 +35,9 @@ class Menu:
     def __init__(self):
         # 遅延importで循環参照を回避
         from main import PowerMarketPortal
-        self.portal = PowerMarketPortal()
+        # PowerMarketPortal のコンストラクタに db_path=None を渡すか、何も渡さないことで、
+        # DuckDBConnection 内での .env を利用したパス解決に委ねる
+        self.portal = PowerMarketPortal() # db_path を指定しない
         
         self.menu_options: Dict[str, Callable] = {
             "1": self._download_jepx_price,
@@ -210,8 +212,7 @@ class Menu:
             "-m", "data_sources.occto.30min_gendata_downloader", # Run as a module
             "--start-date", start_date.strftime('%Y-%m-%d'),
             "--end-date", end_date.strftime('%Y-%m-%d')
-            # Add --db-path if you want to specify it here, otherwise it uses the default
-            # "--db-path", "path/to/your.db"
+            # --db-path は渡さないことで、サブプロセスが自身のデフォルト解決 (.env参照) を使うようにする
         ]
 
         print(f"\nExecuting command: {' '.join(command)}")

@@ -51,13 +51,12 @@ class PowerMarketPortal:
         ポータルの初期化
         
         Args:
-            db_path: データベースファイルのパス
+            db_path: データベースファイルのパス。Noneの場合、各接続で.env等から解決される。
         """
-        self.db_path = db_path or os.getenv("DB_PATH", "/Volumes/MacMiniSSD/powermarketdata/power_market_data")
-        print(f"[main.py] PowerMarketPortal: Using DB file: {self.db_path}")
-        logger.info(f"[main.py] PowerMarketPortal: Using DB file: {self.db_path}")
-        # db接続はメソッド内で with 文を使って行うため、ここでは初期化しない
-        self.db = None
+        self.db_path = db_path # Store db_path; None means DuckDBConnection will resolve via .env
+        logger.info(f"PowerMarketPortal initialized. Provided db_path: {self.db_path}. "
+                    f"If None, connection will use .env or default.")
+        # self.db = None # This instance variable seems unused as connections are typically per-method.
     
     def __del__(self):
         """デストラクタ - インスタンスが破棄される際にDB接続を閉じる"""
@@ -216,8 +215,8 @@ def parse_args():
     parser.add_argument(
         "--db-path",
         type=str,
-        default="/Volumes/MacMiniSSD/powermarketdata/power_market_data",
-        help="データベースファイルのパス"
+        default=None, # .env または DuckDBConnection のデフォルト解決に任せる
+        help="データベースファイルのパス。指定ない場合は.envのDB_PATH等を参照。"
     )
     
     subparsers = parser.add_subparsers(dest="command", help="実行するコマンド")
@@ -262,7 +261,7 @@ def main():
     args = parse_args()
     
     # ポータルインスタンスを作成（データベースパスを指定）
-    portal = PowerMarketPortal(db_path=args.db_path if hasattr(args, 'db_path') else "/Volumes/MacMiniSSD/powermarketdata/power_market_data")
+    portal = PowerMarketPortal(db_path=args.db_path if hasattr(args, 'db_path') else None)
     
     try:
         if args.command == "tso-data":
