@@ -9,6 +9,7 @@
 - **OCCTO（電力広域的運営推進機関）データの取得**
     - 30分発電実績データ
 - **JMA（気象庁）の気象データの取得**
+    - 複数地点対応（設定ファイル経由）
 - **柔軟な設定・拡張性（新TSOや新フォーマット追加が容易）**
 - **CLI・対話型・スクリプトからの多様な利用方法**
 - **`.env` ファイルによるデータベースパスなどの設定管理**
@@ -25,6 +26,7 @@ powermarketdata/
 │   │   ├── jepx_da_price.py # JEPXスポット価格
 │   │   └── jepx_bid.py      # JEPX入札情報
 │   ├── jma/
+│   │   ├── jma_config.py     # JMA観測地点リスト設定
 │   │   ├── jma_historical.py # JMA気象データ履歴取得
 │   │   └── db_importer.py    # JMAデータDBインポート
 │   ├── occto/
@@ -75,8 +77,12 @@ python main.py menu
 python main.py menu
 # (メニューから "4. Power Plant Operation Data from OCCTO" などを選択)
 
-# JMA気象データのダウンロードとDB保存 (対話的に地点や期間を選択する場合)
+# JMA気象データのダウンロードとDB保存 (対話的に期間を選択する場合)
+# デフォルトでは data_sources/jma/jma_config.py に記載の全地点のデータを取得
 python data_sources/jma/jma_historical.py
+
+# JMA気象データのダウンロードとDB保存 (特定の地点を指定する場合)
+python data_sources/jma/jma_historical.py --stations 47662,47772 --start 2023-01-01 --end 2023-01-31
 
 # (参考) TSOデータの直接指定ダウンロード (メインスクリプト経由)
 python main.py tso-data --tso-ids tepco kansai --start-date 2024-03-01 --end-date 2024-03-31
@@ -145,6 +151,7 @@ python main.py tso-data --tso-ids tepco kansai --start-date 2024-03-01 --end-dat
 ## 最近の主な更新
 
 - **JMA気象データ収集機能の追加**: `data_sources/jma/` にて履歴データ取得とDB保存を実装。
+- **JMA気象データ取得の複数地点対応と設定ファイル (`jma_config.py`) の導入**
 - **OCCTO 30分発電実績データ収集・処理機能の改善**: ダウンローダーとDBインポーターの修正、スキーマ変更（master_key導入、カラム名変更、データ型修正）。
 - **データベースパスの `.env` 化**: `DB_PATH` 環境変数を `.env` ファイルから読み込むように `db/duckdb_connection.py` を修正。
 - TSOデータ処理のモジュール化（パース・DL・DB保存の分離）

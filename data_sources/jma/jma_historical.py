@@ -29,6 +29,7 @@ import pandas as pd # Added for DataFrame manipulation
 # from db.duckdb_connection import DuckDBConnection # Added for DB connection
 from data_sources.jma.db_importer import JMAWeatherDBImporter # Import the JMA importer (absolute)
 from db.duckdb_connection import DuckDBConnection # Import base DB connection (absolute)
+from data_sources.jma.jma_config import JMA_STATIONS # Import JMA_STATIONS
 
 # Configure logging
 logging.basicConfig(
@@ -113,8 +114,9 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--stations",
         type=str,
-        required=True,
-        help="Comma-separated 5-digit station codes (e.g., 47662,47626).",
+        required=False, # Changed to False
+        default=None,   # Default to None, will use JMA_STATIONS if not provided
+        help="Comma-separated 5-digit station codes (e.g., 47662,47626). If not provided, uses stations from jma_config.py.",
     )
     parser.add_argument(
         "--elements",
@@ -160,7 +162,12 @@ def parse_cli_args() -> argparse.Namespace:
     if args.end_date < args.start_date:
         parser.error("End date must be after or the same as start date.")
 
-    args.station_list = [s.strip() for s in args.stations.split(",")]
+    if args.stations:
+        args.station_list = [s.strip() for s in args.stations.split(",")]
+    else:
+        args.station_list = [station["id"] for station in JMA_STATIONS]
+        logger.info(f"No stations provided via CLI. Using {len(args.station_list)} stations from jma_config.py: {[station['name'] for station in JMA_STATIONS]}")
+
     args.element_list = [e.strip() for e in args.elements.split(",")]
     args.interval = "hourly"
     
@@ -172,9 +179,13 @@ def get_interactive_args() -> argparse.Namespace:
     print("Data will be fetched at an hourly interval.")
     print("Press Enter to use the default value shown in (parentheses).")
 
-    # Default values
-    default_stations_str = "47662"
-    default_elements_str = "201,401,301,610,703,503"
+    # Default values from jma_config.py for stations
+    default_station_ids_from_config = [station["id"] for station in JMA_STATIONS]
+    default_station_names_from_config = [station["name"] for station in JMA_STATIONS]
+    default_stations_str_display = ", ".join([f"{name}({sid})" for sid, name in zip(default_station_ids_from_config, default_station_names_from_config)])
+    default_stations_input_str = ",".join(default_station_ids_from_config)
+
+    default_elements_str = "201,401,301,610,703,503" # Temp, Precip, SunDur, Wind, SnowDepth, SolarRad
     
     today = datetime.date.today()
     first_day_of_this_month = today.replace(day=1)
@@ -186,16 +197,43 @@ def get_interactive_args() -> argparse.Namespace:
     default_outdir = "./jma_data_csv"
     default_rate = 1.2
 
-    stations_str_in = input(f"Enter station codes (e.g., 47662,47626) (default: {default_stations_str}): ")
-    stations_str = stations_str_in.strip() if stations_str_in.strip() else default_stations_str
-    station_list = [s.strip() for s in stations_str.split(",")]
-    while not all(s.isdigit() and len(s) == 5 for s in station_list if s):
-        print("Invalid station code format. Please use 5-digit numbers, comma-separated.")
-        stations_str_in = input(f"Enter station codes (default: {default_stations_str}): ")
-        stations_str = stations_str_in.strip() if stations_str_in.strip() else default_stations_str
+    stations_str_in = input(f"Enter station codes (comma-separated, e.g., 47662,47626) (default: {default_stations_str_display} from config): ")
+    stations_str = stations_str_in.strip() if stations_str_in.strip() else default_stations_input_str
+    
+    station_list = []
+    if stations_str: # Check if string is not empty after strip or if default was used
         station_list = [s.strip() for s in stations_str.split(",")]
-        if not stations_str:
-            station_list = [s.strip() for s in default_stations_str.split(",")]
+        valid_stations = True
+        for s_id in station_list:
+            if not (s_id.isdigit() and len(s_id) == 5):
+                valid_stations = False
+                break
+        if not valid_stations:
+            print("Invalid station code format detected. Please use 5-digit numbers, comma-separated.")
+            # Fallback to config default or ask again, here we simplify to config default if primary input fails
+            print(f"Reverting to default stations from config: {default_stations_str_display}")
+            station_list = default_station_ids_from_config
+    else: # Should not happen if default_stations_input_str is non-empty
+        logger.warning("Station input was empty, which is unexpected. Using config defaults.")
+        station_list = default_station_ids_from_config
+
+
+    while not station_list or not all(s.isdigit() and len(s) == 5 for s in station_list if s):
+        print("Invalid station code format or empty list. Please use 5-digit numbers, comma-separated.")
+        stations_str_in = input(f"Enter station codes (default: {default_stations_str_display} from config): ")
+        stations_str_raw = stations_str_in.strip()
+        if stations_str_raw: # User provided input
+            station_list = [s.strip() for s in stations_str_raw.split(",")]
+        elif default_stations_input_str: # User hit enter, use config default
+             print(f"Using default stations from config: {default_stations_str_display}")
+             station_list = default_station_ids_from_config
+        else: # User hit enter AND config default is empty (should not happen with current jma_config.py)
+            print("No stations provided and no default stations in config. Please provide station IDs.")
+            station_list = [] # Keep it empty to re-trigger loop or handle error later
+
+        if not station_list: # If still empty after logic, ask again
+             continue
+
 
     elements_str_in = input(f"Enter obsdl element codes (e.g., 201,401,301) (default: {default_elements_str}): ")
     elements_str = elements_str_in.strip() if elements_str_in.strip() else default_elements_str

@@ -25,6 +25,7 @@ powermarketdata/
 │   │   ├── jepx_da_price.py     # JEPXスポット価格ダウンローダー・DBインポーター
 │   │   └── jepx_bid.py          # JEPX入札情報ダウンローダー・DBインポーター
 │   ├── jma/
+│   │   ├── jma_config.py        # JMA観測地点リスト設定
 │   │   ├── jma_historical.py    # JMA気象観測履歴データダウンローダー
 │   │   └── db_importer.py       # JMA気象データDBインポーター
 │   ├── occto/
@@ -110,8 +111,9 @@ DuckDBへの接続と操作を提供する中心的なモジュールです：
 
 ### JMA気象データ (`data_sources/jma/`)
 
--   `jma_historical.py`: 気象庁のウェブサイトから過去の気象観測データをダウンロードし、DataFrameに整形。DB保存処理も含む。
+-   `jma_historical.py`: 気象庁のウェブサイトから過去の気象観測データをダウンロードし、DataFrameに整形。DB保存処理も含む。デフォルトでは`jma_config.py`の全地点を対象とし、CLI引数で上書き可能。
 -   `db_importer.py`: `jma_historical.py` から呼び出され、整形済みDataFrameを `jma_weather` テーブルにインポート。
+-   `jma_config.py`: JMAの観測地点リスト（地点ID、地点名など）を定義する設定ファイル。`jma_historical.py` がこれを読み込んで複数地点のデータを取得します。
 
 ### OCCTO 30分発電実績 (`data_sources/occto/`)
 
@@ -166,8 +168,9 @@ DuckDBへの接続と操作を提供する中心的なモジュールです：
 1.  **JMA気象データ収集機能の追加**: `data_sources/jma/` に履歴データ取得とDB保存を実装。
 2.  **OCCTO 30分発電実績データ収集・処理機能の改善**: ダウンローダーとDBインポーターの修正、スキーマ変更（master_key導入、カラム名変更、データ型修正）。
 3.  **データベースパスの `.env` 化**: `DB_PATH` 環境変数を `.env` ファイルから読み込むように `db/duckdb_connection.py` を修正。
-4.  TSOデータ処理のモジュール化とリファクタリング。
-5.  全体的なエラーハンドリングとロギングの改善。
+4.  **JMA気象データ取得における複数地点対応の強化 (`jma_config.py` の導入)**
+5.  TSOデータ処理のモジュール化とリファクタリング。
+6.  全体的なエラーハンドリングとロギングの改善。
 
 ## 拡張ポイント
 
