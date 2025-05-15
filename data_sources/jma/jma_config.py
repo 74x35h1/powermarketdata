@@ -47,3 +47,38 @@ JMA_STATIONS = [
     {"id": "47827", "name": "鹿児島"},
     {"id": "47936", "name": "那覇"},
 ]
+
+# JMA API Configuration
+JMA_BASE_URL = "https://www.data.jma.go.jp/risk/obsdl/"
+JMA_INDEX_URL = JMA_BASE_URL + "index.php"
+JMA_POST_URL = JMA_BASE_URL + "show/table"  # For CSV download
+
+# Retry Configuration
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY_SECONDS = 5
+DEFAULT_REQUEST_RATE_SECONDS = 1.2 # Default seconds to wait between JMA API requests
+
+# Data Element Configuration
+# Default elements: Temperature, Precipitation, Sunshine Duration, Wind, Snow Depth, Solar Radiation
+DEFAULT_ELEMENT_CODES = ["201", "401", "301", "610", "703", "503"]
+
+# Wind Direction Mapping
+WIND_DIRECTION_TO_DEGREES = {
+    "北": 0.0,
+    "北北東": 22.5,
+    "北東": 45.0,
+    "東北東": 67.5,
+    "東": 90.0,
+    "東南東": 112.5,
+    "南東": 135.0,
+    "南南東": 157.5,
+    "南": 180.0,
+    "南南西": 202.5,
+    "南西": 225.0,
+    "西南西": 247.5,
+    "西": 270.0,
+    "西北西": 292.5,
+    "北西": 315.0,
+    "北北西": 337.5,
+    "静穏": None,  # Calm
+}
