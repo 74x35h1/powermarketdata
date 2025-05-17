@@ -256,16 +256,48 @@ class Menu:
         # TODO: Implement OCCTO wide-area reserve data retrieval
 
     def _download_eprx(self):
-        print("[Starting retrieval of EPRX Price Data...]")
-        # TODO: Implement EPRX Price Data retrieval
+        print("[Not implemented yet: EPRX Price Data]")
 
     def _download_jma_weather(self):
-        print("[Starting retrieval of Weather Data from JMA...]")
-        # TODO: Implement JMA weather data retrieval
+        print("\n[Starting retrieval of Weather Data from JMA...]")
+        
+        jma_script_path = os.path.join(project_root, "data_sources", "jma", "jma_historical.py")
+        
+        command = [
+            sys.executable, # Use the current Python interpreter
+            jma_script_path
+        ]
+
+        print(f"\nExecuting JMA script: {' '.join(command)}")
+        print("This will launch the JMA historical data downloader in interactive mode.")
+        print("Please follow the prompts from the JMA script.")
+        print("-" * 30) # Separator before JMA script output
+
+        try:
+            # Run the script as a subprocess
+            # We don't capture output here as jma_historical.py is interactive
+            # and will print directly to console.
+            # We use Popen and communicate or just let it run if it handles its own interaction.
+            # For simple interactive scripts, just letting it run in the current console is often enough.
+            # If jma_historical.py uses `input()`, it will interact with the user here.
+            process = subprocess.Popen(command, cwd=project_root)
+            process.wait() # Wait for the interactive script to complete
+
+            print("-" * 30) # Separator after JMA script output
+            if process.returncode == 0:
+                print("\n[JMA Weather Data retrieval process completed or exited by user.]")
+            else:
+                print(f"\n[JMA Weather Data retrieval script exited with code: {process.returncode}]")
+
+        except FileNotFoundError:
+            print(f"[ERROR] JMA script not found at: {jma_script_path}")
+            logger.error(f"JMA script not found: {jma_script_path}")
+        except Exception as e:
+            print(f"An unexpected error occurred while trying to run the JMA script: {e}")
+            logger.error(f"Error running JMA script: {e}", exc_info=True)
 
     def _download_eex_futures(self):
-        print("[Starting retrieval of EEX Futures Price Data...]")
-        # TODO: Implement EEX futures price data retrieval
+        print("[Not implemented yet: EEX Futures Price Data]")
 
     def _download_tocom_futures(self):
         print("[Starting retrieval of TOCOM Futures Price Data...]")

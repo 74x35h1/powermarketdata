@@ -322,14 +322,16 @@ def main():
 
     phpsessid: Optional[str] = None
 
-    # Create output directory if it doesn't exist (primarily for HTML dump, less for CSVs now)
-    if not os.path.exists(args.outdir):
+    # Create output directory if it doesn't exist and is specified
+    if args.outdir and not os.path.exists(args.outdir):
         try:
             os.makedirs(args.outdir)
             logger.info(f"Created output directory: {args.outdir}")
         except OSError as e:
-            logger.error(f"Failed to create output directory {args.outdir}: {e}. PHPSESSID HTML dump might fail.")
+            logger.error(f"Failed to create output directory {args.outdir}: {e}. HTML dump might fail if outdir was intended.")
             # Decide if to exit or continue without outdir for HTML
+    elif not args.outdir:
+        logger.info("No output directory specified for CSVs. HTML dump for PHPSESSID will be attempted in the current directory or a default one if needed.")
 
     with requests.Session() as session:
         try:
