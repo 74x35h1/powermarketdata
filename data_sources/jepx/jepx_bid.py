@@ -138,10 +138,15 @@ class JEPXBidDownloader:
     def _record_download(self, dir_name: str, date: datetime, filename: str, status: str):
         """Record download attempt in the database."""
         query = """
-            INSERT INTO downloaded_files (dir_name, date, filename, status)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO downloaded_files (id, dir_name, date, filename, status)
+            VALUES (nextval('downloaded_files_id_seq'), ?, ?, ?, ?)
         """
-        self.db.execute_query(query, (dir_name, date.strftime("%Y-%m-%d"), filename, status))
+        self.db.execute_query(query, (
+            dir_name,
+            date.strftime("%Y-%m-%d"),
+            filename,
+            status
+        ))
     
     def process_csv_to_json(self, csv_text: str):
         data = {}
